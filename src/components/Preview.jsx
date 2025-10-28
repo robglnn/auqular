@@ -40,6 +40,21 @@ function Preview({ clip, isPlaying, onPlay, onPause, playheadPosition, onTimeUpd
     }
   }, [clip]);
 
+  // Sync video currentTime with playhead position
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !clip) return;
+    
+    // Only seek if there's a significant difference (avoid endless loop)
+    const tolerance = 0.1;
+    const currentTime = video.currentTime;
+    const targetTime = playheadPosition;
+    
+    if (Math.abs(currentTime - targetTime) > tolerance) {
+      video.currentTime = targetTime;
+    }
+  }, [playheadPosition, clip]);
+
   const handleVideoClick = (event) => {
     if (videoRef.current) {
       const rect = containerRef.current?.getBoundingClientRect();
@@ -69,7 +84,7 @@ function Preview({ clip, isPlaying, onPlay, onPause, playheadPosition, onTimeUpd
       className="preview-container" 
       ref={containerRef}
       onClick={handleVideoClick}
-      style={{ cursor: 'pointer' }}
+      style={{ cursor: 'pointer', position: 'relative' }}
     >
       <video
         ref={videoRef}
@@ -77,6 +92,36 @@ function Preview({ clip, isPlaying, onPlay, onPause, playheadPosition, onTimeUpd
         controls={false}
         muted
       />
+      <div style={{
+        position: 'absolute',
+        bottom: '20px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        display: 'flex',
+        gap: '10px'
+      }}>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            if (isPlaying) {
+              onPause();
+            } else {
+              onPlay();
+            }
+          }}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: '#007acc',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            fontSize: '14px'
+          }}
+        >
+          {isPlaying ? '⏸ Pause' : '▶ Play'}
+        </button>
+      </div>
     </div>
   );
 }

@@ -2,11 +2,15 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegStatic = require('ffmpeg-static');
+const ffprobeStatic = require('ffprobe-static');
 const fs = require('fs');
 
-// Set FFmpeg path
+// Set FFmpeg paths
 if (ffmpegStatic) {
   ffmpeg.setFfmpegPath(ffmpegStatic);
+}
+if (ffprobeStatic) {
+  ffmpeg.setFfprobePath(ffprobeStatic.path);
 }
 
 let mainWindow;

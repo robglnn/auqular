@@ -42,9 +42,12 @@ function Timeline({ clips, setClips, currentClip, setCurrentClip, playheadPositi
   };
 
   const getClipProps = (clip) => {
+    // Calculate clip position (absolute position on timeline)
     const x = clip.position * PIXELS_PER_SECOND;
-    const width = (clip.trimEnd - clip.trimStart) * PIXELS_PER_SECOND;
-    return { x, width };
+    // Calculate clip width based on trim range
+    const trimmedDuration = clip.trimEnd - clip.trimStart;
+    const width = trimmedDuration * PIXELS_PER_SECOND;
+    return { x, width, trimStart: clip.trimStart, trimEnd: clip.trimEnd };
   };
 
   const handleStageClick = (e) => {
@@ -100,8 +103,12 @@ function Timeline({ clips, setClips, currentClip, setCurrentClip, playheadPositi
           
           {/* Clips */}
           {clips.map((clip, index) => {
-            const { x, width } = getClipProps(clip);
+            const { x, width, trimStart, trimEnd } = getClipProps(clip);
             const isSelected = currentClip?.id === clip.id;
+            
+            // Calculate actual handle positions
+            const handleStartX = x;
+            const handleEndX = x + width;
 
             return (
               <Group key={clip.id}>
@@ -116,7 +123,8 @@ function Timeline({ clips, setClips, currentClip, setCurrentClip, playheadPositi
                   cornerRadius={6}
                   draggable
                   onDragEnd={(e) => {
-                    handleClipDrag(clip.id, e.target.x());
+                    const newX = e.target.x();
+                    handleClipDrag(clip.id, newX);
                   }}
                   onClick={() => handleClipClick(clip)}
                   shadowBlur={5}
@@ -126,7 +134,7 @@ function Timeline({ clips, setClips, currentClip, setCurrentClip, playheadPositi
                 <Text
                   x={x + 10}
                   y={index * 100 + 50}
-                  text={`Clip ${index + 1}`}
+                  text={`Clip ${index + 1} (${trimStart.toFixed(1)}s - ${trimEnd.toFixed(1)}s)`}
                   fontSize={12}
                   fill="white"
                   fontStyle="bold"
@@ -134,14 +142,16 @@ function Timeline({ clips, setClips, currentClip, setCurrentClip, playheadPositi
                 
                 {/* Trim handle - start */}
                 <Rect
-                  x={x - 4}
+                  x={handleStartX - 4}
                   y={index * 100 + 20}
                   width={8}
                   height={80}
-                  fill="rgba(255, 255, 255, 0.3)"
+                  fill={isSelected ? "rgba(0, 255, 0, 0.5)" : "rgba(255, 255, 255, 0.3)"}
                   draggable
                   onDragMove={(e) => {
-                    const newX = Math.max(x - 20, e.target.x() + 4);
+                    const stage = e.target.getStage();
+                    const pointerPos = stage.getPointerPosition();
+                    const newX = pointerPos.x;
                     handleTrimStart(clip.id, newX);
                   }}
                   onMouseEnter={(e) => {
@@ -154,14 +164,16 @@ function Timeline({ clips, setClips, currentClip, setCurrentClip, playheadPositi
                 
                 {/* Trim handle - end */}
                 <Rect
-                  x={x + width - 4}
+                  x={handleEndX - 4}
                   y={index * 100 + 20}
                   width={8}
                   height={80}
-                  fill="rgba(255, 255, 255, 0.3)"
+                  fill={isSelected ? "rgba(0, 255, 0, 0.5)" : "rgba(255, 255, 255, 0.3)"}
                   draggable
                   onDragMove={(e) => {
-                    const newX = Math.min(x + width + 20, e.target.x() - 4);
+                    const stage = e.target.getStage();
+                    const pointerPos = stage.getPointerPosition();
+                    const newX = pointerPos.x;
                     handleTrimEnd(clip.id, newX);
                   }}
                   onMouseEnter={(e) => {
