@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, desktopCapturer, session } = require('electron');
 const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegStatic = require('ffmpeg-static');
@@ -20,9 +20,8 @@ function createWindow() {
     width: 1400,
     height: 900,
     webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js')
+      nodeIntegration: true,  // Enable for MediaRecorder compatibility
+      contextIsolation: false  // Required for MediaRecorder to work in Electron
     }
   });
 
@@ -36,6 +35,29 @@ function createWindow() {
 
 app.whenReady().then(() => {
   createWindow();
+
+  // Handle permission requests for media (camera, microphone, screen)
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    console.log(`Permission request for '${permission}'`);
+    console.log('Permission details:', details);
+    
+    if (permission === 'media') {
+      // Auto-grant media permissions (includes camera and microphone)
+      console.log('Granting media permission');
+      callback(true);
+    } else if (permission === 'camera') {
+      console.log('Camera permission requested');
+      callback(true);
+    } else if (permission === 'microphone') {
+      console.log('Microphone permission requested');
+      callback(true);
+    } else {
+      console.log(`Denying permission: ${permission}`);
+      callback(false);
+    }
+  });
+
+  // Let the system picker handle display media requests - no custom handler needed
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -144,5 +166,116 @@ ipcMain.handle('show-save-dialog', async () => {
     return result.filePath;
   }
   return null;
+});
+
+ipcMain.handle('get-desktop-sources', async () => {
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen', 'window'],
+      thumbnailSize: { width: 150, height: 150 }
+    });
+    return sources;
+  } catch (error) {
+    console.error('Error getting desktop sources:', error);
+    return [];
+  }
+});
+
+ipcMain.handle('show-record-save-dialog', async () => {
+  const result = await dialog.showSaveDialog({
+    filters: [
+      { name: 'Video Files', extensions: ['mp4'] }
+    ],
+    defaultPath: `recording_${Date.now()}.mp4`
+  });
+
+  if (!result.canceled) {
+    return result.filePath;
+  }
+  return null;
+});
+
+ipcMain.handle('save-recorded-video', async (event, { filePath, buffer }) => {
+  try {
+    fs.writeFileSync(filePath, Buffer.from(buffer));
+    return true;
+  } catch (error) {
+    console.error('Error saving recorded video:', error);
+    return false;
+  }
+});
+
+// IPC handler to save frame images to temp directory
+ipcMain.handle('save-frame-to-temp', async (event, { frameIndex, frameData }) => {
+  try {
+    const tempDir = path.join(__dirname, 'temp_frames');
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir);
+    }
+    const framePath = path.join(tempDir, `frame_${frameIndex.toString().padStart(6, '0')}.png`);
+    fs.writeFileSync(framePath, Buffer.from(frameData));
+    return framePath;
+  } catch (error) {
+    console.error('Error saving frame:', error);
+    return null;
+  }
+});
+
+// IPC handler to convert frames to video using FFmpeg
+ipcMain.handle('convert-frames-to-video', async (event, { outputPath, frameRate = 30 }) => {
+  return new Promise((resolve, reject) => {
+    try {
+      const tempDir = path.join(__dirname, 'temp_frames');
+      const inputPattern = path.join(tempDir, 'frame_%06d.png');
+      
+      console.log('Converting frames to video:', inputPattern, '->', outputPath);
+      
+      const command = ffmpeg(inputPattern)
+        .inputOptions([
+          `-r ${frameRate}`,  // Input frame rate
+          '-framerate 30'
+        ])
+        .outputOptions([
+          '-c:v libx264',
+          '-pix_fmt yuv420p',
+          '-r 30',  // Output frame rate
+          '-preset fast',
+          '-crf 23',
+          '-movflags +faststart'  // Optimize for web playback
+        ])
+        .output(outputPath);
+
+      command
+        .on('start', (commandLine) => {
+          console.log('FFmpeg started:', commandLine);
+        })
+        .on('progress', (progress) => {
+          console.log('FFmpeg progress:', progress);
+        })
+        .on('end', () => {
+          console.log('FFmpeg conversion complete');
+          
+          // Clean up temp frames
+          if (fs.existsSync(tempDir)) {
+            fs.readdirSync(tempDir).forEach(file => {
+              fs.unlinkSync(path.join(tempDir, file));
+            });
+            fs.rmdirSync(tempDir);
+            console.log('Temp frames cleaned up');
+          }
+          
+          resolve({ success: true });
+        })
+        .on('error', (err) => {
+          console.error('FFmpeg error:', err);
+          reject(err);
+        })
+        .run();
+
+    } catch (error) {
+      console.error('Error converting frames:', error);
+      reject(error);
+    }
+  });
 });
 

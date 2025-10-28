@@ -66,8 +66,15 @@
 - ✅ Show success message
 
 ### Advanced Features (Stretch)
-- ⏳ Screen recording with desktopCapturer
-- ⏳ Webcam recording with getUserMedia
+- ✅ **Webcam Recording** (COMPLETE - Canvas + FFmpeg approach)
+  - ⚠️ MediaRecorder API incompatible with Electron v39
+  - ✅ Created WebcamRecorder component with Canvas frame capture
+  - ✅ Fixed frame capture loop synchronization issue
+  - ✅ Fixed FFmpeg codec/container mismatch (WebM → MP4)
+  - ✅ FFmpeg frame-to-video conversion working perfectly
+  - ✅ Webcam recording tested and functional end-to-end
+  - ✅ Automatic import of recorded videos into timeline
+- 🚧 **Screen Recording** (Still shows "NotSupportedError") 
 - ⏳ Picture-in-picture overlay
 - ⏳ Split clip at playhead
 - ⏳ Delete clip from timeline
@@ -75,18 +82,41 @@
 - ⏳ Snap to clips
 
 ## Current Status
-**Phase**: ✅ MVP COMPLETE - All Features Implemented and Tested  
+**Phase**: ✅ MVP Complete + Webcam Recording Working!  
 **Build**: ✅ Working  
 **App Launch**: ✅ Launches successfully  
 **Core Features**: ✅ 100% complete  
 **Export**: ✅ Working  
-**Testing**: ✅ All features tested  
+**Webcam Recording**: ✅ Working (Canvas + FFmpeg)  
+**Screen Recording**: 🚧 Still needs work  
+**Testing**: ✅ Webcam recording tested and functional  
 **Packaging**: ✅ Windows EXE built
 
 ## Known Issues 🐛
 
 ### Critical
-✅ **All resolved!**
+✅ **MediaRecorder API Incompatibility - SOLVED!**
+- **Issue**: MediaRecorder does not work in Electron v39
+- **Symptoms**: State stays 'inactive', no data collected, stream becomes inactive
+- **✅ Solution**: Canvas frame capture + FFmpeg conversion
+- **Status**: Webcam recording now works perfectly!
+
+✅ **Frame Capture Loop Synchronization - SOLVED!**
+- **Issue**: Frame capture loop started before `isRecording` state updated
+- **Symptoms**: "No frames captured" error, recording timer running but no data
+- **✅ Solution**: Used `recordingActiveRef` instead of async `isRecording` state
+- **Status**: Frame capture now works immediately
+
+✅ **FFmpeg Codec/Container Mismatch - SOLVED!**
+- **Issue**: H.264 codec (`libx264`) incompatible with WebM container
+- **Symptoms**: "ffmpeg exited with code 1: Conversion failed!"
+- **✅ Solution**: Changed output format from WebM to MP4, added `-movflags +faststart`
+- **Status**: Video conversion now works perfectly
+
+### Non-Critical
+🚧 **Screen Recording Still Shows "NotSupportedError"**
+- Screen recording needs separate implementation
+- May require different approach than webcam
 
 ### Non-Critical
 - Bundle size warning (acceptable for desktop app - 429KB)
