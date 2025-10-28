@@ -1,0 +1,72 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+out/
+release/
+build/
+*.exe
+
+# Large media files (unless needed for testing)
+#*.mp4
+*.mov
+*.avi
+*.mkv
+*.wmv
+*.flv
+*.webm
+*.m4v
+*.3gp
+*.ogv
+
+# Binary files
+*.dll
+*.so
+*.dylib
+*.bin
+*.exe
+*.app
+
+# Cache
+.cache/
+.temp/
+tmp/
+temp/
+
+# Logs
+*.log
+logs/
+debug.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+
+# Electron Builder
+app-builds/
+packages/
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Archive files
+*.zip
+*.tar
+*.gz
+*.rar
+*.7z
+
+# Thumbnails (generated)
+thumbnails/
+*.thumb.*
+

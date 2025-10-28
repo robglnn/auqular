@@ -1,0 +1,70 @@
+# Source files (only needed if not publishing to npm)
+# src/
+# auqular/
+
+# Configuration
+.cursorrules
+*.md
+!README.md
+
+# Development files
+tasks.md
+auqular_prd.md
+mermaid.md
+
+# Electron specific
+.electron-gyp/
+electron-builder.yml
+
+# Dev dependencies
+node_modules/
+yarn.lock
+package-lock.json
+
+# Tests
+test/
+spec/
+*.test.js
+*.spec.js
+__tests__/
+
+# Examples
+examples/
+example/
+
+# Build tools
+webpack.config.js
+babel.config.js
+.vscode/
+.idea/
+
+# CI
+.github/
+.travis.yml
+.circleci/
+
+# Debug
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Cursor
+.cursor/
+.cursorignore
+
+# Electron Builder output
+app-builds/
+packages/
+
