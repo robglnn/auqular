@@ -4,6 +4,9 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegStatic = require('ffmpeg-static');
 const ffprobeStatic = require('ffprobe-static');
 const fs = require('fs');
+const record = require('node-record-lpcm16');
+const mic = require('mic');
+const sox = require('sox-audio');
 
 // Set FFmpeg paths
 if (ffmpegStatic) {
@@ -222,28 +225,51 @@ ipcMain.handle('save-frame-to-temp', async (event, { frameIndex, frameData }) =>
 });
 
 // IPC handler to convert frames to video using FFmpeg
-ipcMain.handle('convert-frames-to-video', async (event, { outputPath, frameRate = 30 }) => {
+ipcMain.handle('convert-frames-to-video', async (event, { outputPath, frameRate = 30, audioFiles = [] }) => {
   return new Promise((resolve, reject) => {
     try {
       const tempDir = path.join(__dirname, 'temp_frames');
       const inputPattern = path.join(tempDir, 'frame_%06d.png');
       
       console.log('Converting frames to video:', inputPattern, '->', outputPath);
+      console.log('Audio files to mix:', audioFiles);
       
-      const command = ffmpeg(inputPattern)
+      let command = ffmpeg(inputPattern)
         .inputOptions([
           `-r ${frameRate}`,  // Input frame rate
           '-framerate 30'
-        ])
-        .outputOptions([
-          '-c:v libx264',
-          '-pix_fmt yuv420p',
-          '-r 30',  // Output frame rate
-          '-preset fast',
-          '-crf 23',
-          '-movflags +faststart'  // Optimize for web playback
-        ])
-        .output(outputPath);
+        ]);
+      
+      // Add audio inputs if available
+      if (audioFiles.length > 0) {
+        audioFiles.forEach(audioFile => {
+          command = command.input(audioFile);
+        });
+        
+        // Mix multiple audio streams if more than one
+        if (audioFiles.length > 1) {
+          command = command.complexFilter([
+            `[1:a][2:a]amix=inputs=${audioFiles.length}:duration=longest[aout]`
+          ]).outputOptions(['-map', '0:v', '-map', '[aout]']);
+        } else {
+          command = command.outputOptions(['-map', '0:v', '-map', '1:a']);
+        }
+      }
+      
+      command = command.outputOptions([
+        '-c:v libx264',
+        '-pix_fmt yuv420p',
+        '-r 30',  // Output frame rate
+        '-preset fast',
+        '-crf 23',
+        '-movflags +faststart'  // Optimize for web playback
+      ]);
+      
+      if (audioFiles.length > 0) {
+        command = command.outputOptions(['-c:a', 'aac', '-b:a', '128k']);
+      }
+      
+      command = command.output(outputPath);
 
       command
         .on('start', (commandLine) => {
@@ -264,6 +290,14 @@ ipcMain.handle('convert-frames-to-video', async (event, { outputPath, frameRate 
             console.log('Temp frames cleaned up');
           }
           
+          // Clean up audio files
+          audioFiles.forEach(audioFile => {
+            if (fs.existsSync(audioFile)) {
+              fs.unlinkSync(audioFile);
+              console.log('Cleaned up audio file:', audioFile);
+            }
+          });
+          
           resolve({ success: true });
         })
         .on('error', (err) => {
@@ -277,5 +311,166 @@ ipcMain.handle('convert-frames-to-video', async (event, { outputPath, frameRate 
       reject(error);
     }
   });
+});
+
+// Audio recording handlers
+let systemAudioRecorder = null;
+let microphoneRecorder = null;
+let audioData = {
+  systemAudio: [],
+  microphone: []
+};
+
+ipcMain.handle('start-system-audio-recording', async () => {
+  try {
+    console.log('Starting system audio recording with SoX...');
+    
+    // Check if SoX is available
+    try {
+      // Test SoX availability by trying to create a simple recorder
+      const testRecorder = sox.record({
+        input: 'default',
+        output: 'pipe',
+        format: 'wav',
+        channels: 1,
+        rate: 44100,
+        bits: 16
+      });
+      
+      // If we get here, SoX is available
+      console.log('SoX is available and working');
+      testRecorder.kill(); // Clean up test recorder
+      
+    } catch (soxError) {
+      console.warn('SoX not available, falling back to node-record-lpcm16:', soxError.message);
+      // Fallback to node-record-lpcm16 if SoX is not available
+      return { success: false, error: 'SoX not available. Please install SoX for system audio recording or use microphone only.' };
+    }
+    
+    // Clear previous audio data
+    audioData.systemAudio = [];
+    
+    // Start SoX recording for system audio
+    systemAudioRecorder = sox.record({
+      input: 'default', // Use default system audio input
+      output: 'pipe', // Output to stream
+      format: 'wav',
+      channels: 2,
+      rate: 44100,
+      bits: 16
+    });
+    
+    // Recorder is stored in global variable for cleanup
+    
+    // Collect audio data
+    systemAudioRecorder.on('data', (chunk) => {
+      audioData.systemAudio.push(chunk);
+    });
+    
+    systemAudioRecorder.on('error', (error) => {
+      console.error('SoX system audio recording error:', error);
+    });
+    
+    console.log('System audio recording started successfully with SoX');
+    return { success: true };
+    
+  } catch (error) {
+    console.error('Error starting system audio recording:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('start-microphone-recording', async () => {
+  try {
+    console.log('Starting microphone recording...');
+    
+    // Prevent multiple microphone recordings
+    if (microphoneRecorder) {
+      console.log('Microphone recording already active, skipping...');
+      return { success: true, message: 'Microphone recording already active' };
+    }
+    
+    // Configure microphone recording
+    const micInstance = mic({
+      rate: '44100',
+      channels: '2',
+      debug: false,
+      exitOnSilence: 6
+    });
+    
+    microphoneRecorder = micInstance;
+    
+    const micInputStream = micInstance.getAudioStream();
+    
+    micInputStream.on('data', (data) => {
+      audioData.microphone.push(data);
+    });
+    
+    micInputStream.on('error', (error) => {
+      console.error('Microphone recording error:', error);
+    });
+    
+    micInstance.start();
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Error starting microphone recording:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('stop-audio-recording', async () => {
+  try {
+    console.log('Stopping audio recording...');
+    
+    if (systemAudioRecorder) {
+      console.log('Stopping SoX system audio recording...');
+      systemAudioRecorder.kill(); // SoX uses kill() instead of stop()
+      systemAudioRecorder = null;
+    }
+    
+    if (microphoneRecorder) {
+      console.log('Stopping microphone recording...');
+      microphoneRecorder.stop();
+      microphoneRecorder = null;
+    }
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Error stopping audio recording:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('save-audio-data', async (event, { outputPath, audioType }) => {
+  try {
+    console.log(`Saving ${audioType} audio data to:`, outputPath);
+    
+    const audioBuffer = audioData[audioType];
+    if (!audioBuffer || audioBuffer.length === 0) {
+      return { success: false, error: 'No audio data to save' };
+    }
+    
+    // Combine all audio chunks
+    const totalLength = audioBuffer.reduce((sum, chunk) => sum + chunk.length, 0);
+    const combinedBuffer = Buffer.alloc(totalLength);
+    let offset = 0;
+    
+    for (const chunk of audioBuffer) {
+      chunk.copy(combinedBuffer, offset);
+      offset += chunk.length;
+    }
+    
+    // Save as WAV file
+    fs.writeFileSync(outputPath, combinedBuffer);
+    
+    // Clear the audio data
+    audioData[audioType] = [];
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Error saving audio data:', error);
+    return { success: false, error: error.message };
+  }
 });
 

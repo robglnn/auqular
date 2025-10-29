@@ -3,17 +3,21 @@
 ## Technology Stack
 
 ### Frontend (Renderer Process)
-- **React** v18.2.0 - Component-based UI
-- **react-konva** v18 - React bindings for Konva
-- **Konva** v10.0.8 - Canvas-based timeline interactions
+- **React** v18.3.1 - Component-based UI with hooks
+- **react-konva** v18.2.14 - React bindings for Konva
+- **Konva** v10.0.8 - Canvas-based multi-lane timeline interactions
+- **use-image** - Async image loading for thumbnails
 - **HTML5 Video** - Preview playback
 - CSS for styling (dark theme)
 
 ### Backend (Main Process)
 - **Electron** v39.0.0 - Desktop app framework
 - **fluent-ffmpeg** v2.1.3 - FFmpeg wrapper for Node.js
-- **ffmpeg-static** v5.2.0 - Bundled FFmpeg binary
-- **Node.js** - File system operations, IPC
+- **ffmpeg-static** v5.2.0, **ffprobe-static** v3.1.0 - Bundled FFmpeg/FFprobe binaries
+- **mic** v2.1.2 - Microphone audio recording
+- **node-record-lpcm16** v1.0.1 - System audio recording
+- **sox-audio** v0.3.0 - Enhanced audio processing (optional)
+- **Node.js** - File system operations, IPC, canvas frame capture
 
 ### Build Tools
 - **Webpack** v5.102.1 - Bundling
@@ -67,9 +71,11 @@ Renderer → Main (via ipcRenderer.invoke):
 ## Dependencies
 
 ### Runtime Dependencies
-- react@18.2.0, react-dom@18.2.0
-- react-konva@18.2.0, konva@10.0.8
-- fluent-ffmpeg@2.1.3, ffmpeg-static@5.2.0
+- react@18.3.1, react-dom@18.3.1
+- react-konva@18.2.14, konva@10.0.8
+- fluent-ffmpeg@2.1.3, ffmpeg-static@5.2.0, ffprobe-static@3.1.0
+- use-image (for async thumbnail loading)
+- mic@2.1.2, node-record-lpcm16@1.0.1, sox-audio@0.3.0 (for audio recording)
 
 ### Development Dependencies
 - electron@39.0.0

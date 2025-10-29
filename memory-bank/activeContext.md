@@ -1,17 +1,53 @@
 # Active Context: Auqular Development
 
 ## Current Focus
-🎉 **WEBCAM RECORDING FULLY WORKING!** Complete end-to-end webcam recording with Canvas frame capture + FFmpeg conversion. Successfully tested recording, saving, and automatic import into timeline!
+✅ **SEQUENTIAL PLAYBACK COMPLETE** - Final Cut Pro-style continuous playhead advancement with seamless clip transitions, gap handling, and end-of-timeline detection fully implemented and working!
 
 ## Recent Changes (Current Session)
 
+### Sequential Playback Implementation ✅ COMPLETE!
+- **Continuous playhead advancement** - Real-time playhead movement using `requestAnimationFrame`
+- **Seamless clip transitions** - Automatic switching between clips as playhead advances
+- **Gap handling** - Playhead continues through empty spaces between clips
+- **End-of-timeline detection** - Stops only when reaching the end of all clips
+- **Independent preview** - Shows clip at current playhead position, not just selected clip
+- **Final Cut Pro behavior** - Playhead controls playback, clips play in timeline order
+- **Multi-lane support** - Works with visible lanes and lane visibility toggles
+- **Performance optimized** - Efficient animation loop with proper cleanup
+
+### Multi-Lane Timeline Implementation ✅ COMPLETE!
+- **Created MultiLaneTimeline.jsx** - New timeline component replacing old single-lane Timeline.jsx
+- **Implemented lane system** - 3 default lanes (Video + 2 Audio) with dynamic lane creation
+- **Added video thumbnails** - Using `use-image` package for first/last frame previews
+- **Implemented auto-snap positioning** - Clips snap to nearby clips within 20px threshold
+- **Added lane visibility toggles** - Eyeball icon to hide/show lanes from preview/export
+- **Lane toolbar** - Small toolbar on left of each lane with 3 button slots
+- **Visual feedback** - Hidden lanes greyed out at 30% opacity
+- **Export integration** - Only visible lanes included in export
+- **Vertical scrolling** - Mouse wheel support for 3+ lanes
+- **Fixed handleWheel bug** - Restored missing function that caused blank screen
+
+## Recent Changes (Previous Session)
+
 ### Recording Feature Development ✅ COMPLETE!
 - **Added WebcamRecorder component** with Canvas frame capture approach
-- **Configured Electron permissions** for camera/microphone access
+- **Added ScreenRecorder component** using desktopCapturer API + getUserMedia
+- **Added SimultaneousRecorder component** with Loom-style PiP overlay
+- **Configured Electron permissions** for camera/microphone/screen access
 - **Attempted MediaRecorder API** but discovered fundamental incompatibility with Electron v39
-- **✅ IMPLEMENTED WORKAROUND**: Canvas frame capture + FFmpeg conversion
+- **✅ IMPLEMENTED WORKAROUND**: Canvas frame capture + FFmpeg conversion for all types
 - **✅ FIXED CRITICAL BUGS**: Frame capture synchronization + FFmpeg codec/container mismatch
-- **✅ TESTED END-TO-END**: Recording → Saving → Import → Timeline integration working perfectly
+- **✅ TESTED END-TO-END**: All recording types → Saving → Import → Timeline integration working perfectly
+
+### Known Issues to Address Later
+- **SoX Integration**: sox-audio package API mismatch (`sox.version` and `sox.record` not functions as expected)
+  - System audio recording falls back to node-record-lpcm16
+  - Will need to investigate alternative npm package or direct SoX binary integration
+  - Microphone recording working correctly
+- **Current Timeline Limitations**: Clips stack vertically (one per row) without proper lane management
+  - Need multi-lane architecture similar to Final Cut Pro
+  - Need video thumbnail previews on each clip
+  - Need automatic clip positioning and visual continuation
 
 ### Critical Discovery: MediaRecorder Incompatibility 🚨 → SOLVED ✅
 **Issue**: MediaRecorder in Electron v39 does not work properly with getUserMedia/getDisplayMedia
@@ -41,6 +77,12 @@
 - **Symptoms**: "ffmpeg exited with code 1: Conversion failed!"
 - **Solution**: Changed output format from WebM to MP4, added `-movflags +faststart`
 - **Result**: Video conversion now works perfectly
+
+**Screen Recording Implementation**:
+- **Problem**: getDisplayMedia API not working in Electron
+- **Solution**: Used desktopCapturer API to list screens, then getUserMedia with Electron-specific constraints
+- **Implementation**: ScreenRecorder component with desktopCapturer.getSources() + getUserMedia with chromeMediaSource: 'desktop'
+- **Result**: Screen recording now works perfectly!
 
 ### Recent Changes (October 28, 2025)
 
@@ -110,15 +152,16 @@
 ## Current Blockers
 
 ### Recording Implementation ✅ FULLY RESOLVED!
-**Status**: Webcam recording now works perfectly using Canvas + FFmpeg approach
+**Status**: Both webcam and screen recording now work perfectly using Canvas + FFmpeg approach
 **Solution Implemented**: 
 1. ✅ Created WebcamRecorder.jsx with canvas frame capture
-2. ✅ Fixed frame capture loop synchronization bug
-3. ✅ Fixed FFmpeg codec/container mismatch (WebM → MP4)
-4. ✅ Added FFmpeg conversion of frames to video
-5. ✅ Tested end-to-end recording workflow successfully
-6. ✅ Automatic import of recorded videos into timeline
-7. ⏳ Screen recording still shows "NotSupportedError" (separate issue)
+2. ✅ Created ScreenRecorder.jsx using desktopCapturer API
+3. ✅ Fixed frame capture loop synchronization bug
+4. ✅ Fixed FFmpeg codec/container mismatch (WebM → MP4)
+5. ✅ Added FFmpeg conversion of frames to video
+6. ✅ Tested end-to-end recording workflow successfully for both types
+7. ✅ Automatic import of recorded videos into timeline
+8. ✅ Added UI toggle between webcam and screen recording
 
 ### FFmpeg Path Issue ✅ RESOLVED
 **Status**: Fixed by adding ffprobe-static and configuring path in main.js
