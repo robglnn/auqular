@@ -1,9 +1,55 @@
 # Active Context: Auqular Development
 
 ## Current Focus
-🎯 **CRITICAL PRIORITY: Video Preview Rendering During Playback** - Video shows correctly on pause but displays black screen during active playback. This blocks core editing workflow.
+🎯 **Recording & Export Features Complete!** - Screen recording, audio embedding, and sequential export all working perfectly. Main remaining issue is video preview rendering during playback.
 
 ## Recent Changes (Current Session)
+
+### Screen Recording Desktop Source Detection ✅ COMPLETE! (Latest Session)
+- **Fixed "No desktop sources found" error** - Updated `fetchDesktopSources()` to request both `['screen', 'window']` types instead of just `['screen']`
+- **IPC handler integration** - Now uses `ipcRenderer.invoke('get-desktop-sources')` as primary method (more reliable)
+- **Fallback handling** - Direct `desktopCapturer.getSources()` fallback also requests both types
+- **Enhanced logging** - Shows which sources are found and which one is selected
+- **Result**: Screen recording now works reliably, finds desktop sources correctly
+
+### Sequential Clip Export ✅ COMPLETE! (Latest Session)
+- **Lane-based grouping** - Export handler now groups clips by lane before processing
+- **Sequential concatenation** - Clips on the same lane are sorted by `timelineStart` and concatenated sequentially using FFmpeg concat demuxer
+- **Overlay support** - Clips on different lanes overlay (PiP style) while same-lane clips concatenate
+- **Implementation**: 
+  - Clips grouped by `lane` property passed from App.jsx
+  - Single lane with multiple clips → concat demuxer
+  - Multiple lanes → overlay filters
+  - Gaps handled with trimmed intermediate files
+- **Result**: Sequential clips export back-to-back, overlapping clips from different lanes overlay correctly
+
+### Audio Embedding in Recordings ✅ COMPLETE! (Latest Session)
+- **Audio merged into video** - Recorded videos now have audio embedded directly in the video file
+- **No separate audio files** - Temporary audio files (WebM, WAV) are created during recording but merged and cleaned up automatically
+- **convert-frames-to-video handler** - Updated to merge all audio tracks (microphone + system) into video using FFmpeg `amix` filter
+- **Cleanup** - All temporary audio files deleted after merging
+- **Result**: Single video file with embedded audio - works in preview and export without separate audio imports
+
+### Export Audio Extraction ✅ COMPLETE! (Latest Session)
+- **Video audio extraction** - Export handler now extracts audio from video clips that have embedded audio (e.g., simultaneous recordings)
+- **Timeline positioning** - Video audio delayed by `timelineStart` to match timeline positions
+- **Audio mixing** - Video audio mixed with standalone audio clips using FFmpeg `amix`
+- **Implementation**:
+  - Probes video clips for audio presence using `hasAudio()` helper
+  - Extracts audio from video inputs: `[0:a]` for single/concat, `[0:a]`, `[1:a]`, etc. for overlays
+  - Applies delays based on `timelineStart` relative to timeline start
+  - Mixes all audio tracks together
+- **Result**: Exported videos include audio from video clips (preview and export both have audio)
+
+### Screen Only Recording Mode ✅ COMPLETE! (Latest Session)
+- **New ScreenRecorder component** - Created dedicated component for screen-only recording
+- **Microphone option** - Toggle checkbox to include/exclude microphone audio
+- **Same proven approach** - Uses canvas frame capture + FFmpeg conversion (same as SimultaneousRecorder)
+- **Audio embedding** - Microphone audio embedded in video file automatically
+- **UI integration** - Added "Screen Only" radio button option alongside "Webcam Only" and "Screen + Webcam"
+- **Result**: Three recording modes available: Webcam Only, Screen Only (with optional mic), Screen + Webcam (Loom style)
+
+## Recent Changes (Previous Session)
 
 ### UI Polish & Optimization ✅ COMPLETE! (October 30, 2025)
 - **Button Styling Consistency** - Import Audio button now uses same `btn btn-primary` class as Import Video and Record buttons
@@ -112,12 +158,14 @@
 
 ### Recording Feature Development ✅ COMPLETE!
 - **Added WebcamRecorder component** with Canvas frame capture approach
-- **Added ScreenRecorder component** using desktopCapturer API + getUserMedia
+- **Added ScreenRecorder component** using desktopCapturer API + getUserMedia (fixed desktop source detection)
 - **Added SimultaneousRecorder component** with Loom-style PiP overlay
+- **Added Screen Only mode** - New ScreenRecorder component with optional microphone
 - **Configured Electron permissions** for camera/microphone/screen access
 - **Attempted MediaRecorder API** but discovered fundamental incompatibility with Electron v39
 - **✅ IMPLEMENTED WORKAROUND**: Canvas frame capture + FFmpeg conversion for all types
 - **✅ FIXED CRITICAL BUGS**: Frame capture synchronization + FFmpeg codec/container mismatch
+- **✅ AUDIO EMBEDDING**: All recordings now embed audio directly in video file (no separate audio files)
 - **✅ TESTED END-TO-END**: All recording types → Saving → Import → Timeline integration working perfectly
 
 ### Known Issues to Address Later

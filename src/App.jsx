@@ -4,6 +4,7 @@ import Preview from './components/Preview.jsx';
 import MultiLaneTimeline from './components/MultiLaneTimeline.jsx';
 import WebcamRecorder from './components/WebcamRecorder.jsx';
 import SimultaneousRecorder from './components/SimultaneousRecorder.jsx';
+import ScreenRecorder from './components/ScreenRecorder.jsx';
 
 function App() {
   const [clips, setClips] = useState([]);
@@ -611,6 +612,15 @@ function App() {
                 <input
                   type="radio"
                   name="recordingType"
+                  checked={recordingType === 'screen'}
+                  onChange={() => setRecordingType('screen')}
+                />
+                Screen Only
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="recordingType"
                   checked={recordingType === 'simultaneous'}
                   onChange={() => setRecordingType('simultaneous')}
                 />
@@ -619,6 +629,8 @@ function App() {
             </div>
             {recordingType === 'webcam' ? (
               <WebcamRecorder onRecordingComplete={handleRecordingComplete} />
+            ) : recordingType === 'screen' ? (
+              <ScreenRecorder onRecordingComplete={handleRecordingComplete} />
             ) : recordingType === 'simultaneous' ? (
               <SimultaneousRecorder onRecordingComplete={handleRecordingComplete} />
             ) : (

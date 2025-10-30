@@ -14,10 +14,11 @@
 - **Electron** v39.0.0 - Desktop app framework
 - **fluent-ffmpeg** v2.1.3 - FFmpeg wrapper for Node.js
 - **ffmpeg-static** v5.2.0, **ffprobe-static** v3.1.0 - Bundled FFmpeg/FFprobe binaries
-- **mic** v2.1.2 - Microphone audio recording
+- **mic** v2.1.2 - Microphone audio recording (fallback)
+- **MediaRecorder API** - Primary microphone capture method (WebM format, converted to WAV)
 - **node-record-lpcm16** v1.0.1 - System audio recording fallback
 - **sox-audio** v0.3.0 - Enhanced audio processing (optional)
-- **SoX** (bundled binary) - System audio capture (tabled)
+- **SoX** (bundled binary) - System audio capture (optional, tabled for now)
 - **Node.js** - File system operations, IPC, canvas frame capture
 
 ### Build Tools
@@ -59,7 +60,8 @@ Renderer → Main (via ipcRenderer.invoke):
 - `getVideoDuration(path)` - Get video metadata
 - `generateThumbnail(path)` - Create thumbnail
 - `exportVideo({inputPath, outputPath, startTime, endTime, scaleResolution})` - Export (scaleResolution: null=source, 720, 1080)
-- `export-multi-lane({outputPath, videoClips, audioClips, scaleResolution})` - Multi-lane export with scaling
+- `export-multi-lane({outputPath, videoClips, audioClips, scaleResolution})` - Multi-lane export with scaling, sequential concatenation, and audio extraction
+- `convert-frames-to-video({outputPath, frameRate, audioFiles})` - Converts frame sequence to video with embedded audio
 - `showSaveDialog()` - Save dialog
 
 ## Technical Constraints
@@ -132,13 +134,13 @@ Renderer → Main (via ipcRenderer.invoke):
 - Preserves play state during reset (continues playing)
 - Finds clip at start position for seamless loop transition
 
-### Export Timeline Syncing Challenges
-- Export attempts to use `timelineStart`/`timelineEnd` for accurate positioning
-- FFmpeg filter chain complexity for black frame padding:
-  - `tpad` filter for padding before video (`start_mode=clone`)
-  - `tpad` filter for padding after video (`stop_mode=clone`)
-- Filter output mapping must correctly chain: `[0:v]` → `[v_start]` → `[v_final]`
-- Current issues suggest filter chain may not be correctly applied or mapped
+### Export Timeline Syncing ✅ RESOLVED
+- Export uses `timelineStart`/`timelineEnd` for accurate positioning
+- **Sequential concatenation**: Clips on same lane grouped by lane ID, sorted by timelineStart, concatenated using FFmpeg concat demuxer
+- **Overlay composition**: Clips on different lanes overlay using FFmpeg overlay filter
+- **Audio extraction**: Video clips with embedded audio have audio extracted (`[0:a]`, `[1:a]`, etc.) and delayed by timelineStart
+- **Audio mixing**: All audio tracks (video audio + standalone audio clips) mixed using `amix` filter
+- **Implementation**: Lane grouping → Concat same-lane clips → Overlay different lanes → Extract/mix audio → Apply delays
 
 ## Known Technical Issues & Solutions
 

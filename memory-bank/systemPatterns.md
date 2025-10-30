@@ -125,7 +125,90 @@ useEffect(() => {
 }, []);
 ```
 
-### 3. Clip State Management (In Progress)
+### 3. Sequential Clip Export Pattern ✅ IMPLEMENTED
+**Need**: Export clips on same lane sequentially (back-to-back), clips on different lanes overlay  
+**Pattern**: Lane-based grouping + conditional processing (concat vs overlay)  
+**Implementation**:
+```javascript
+// Group clips by lane
+const videoLanes = {};
+videoClips.forEach(clip => {
+  const lane = clip.lane || 'default';
+  if (!videoLanes[lane]) videoLanes[lane] = [];
+  videoLanes[lane].push(clip);
+});
+
+// Sort by timelineStart within each lane
+Object.keys(videoLanes).forEach(lane => {
+  videoLanes[lane].sort((a, b) => (a.timelineStart || 0) - (b.timelineStart || 0));
+});
+
+// Process: Concat same-lane, overlay different-lane
+if (needsConcat && !needsOverlay) {
+  // Use FFmpeg concat demuxer for sequential clips
+} else if (needsOverlay) {
+  // Use overlay filter for different lanes
+}
+```
+**Why This Works**: Lanes represent logical groupings. Same lane = sequential content, different lanes = simultaneous overlay.
+
+### 4. Audio Embedding Pattern ✅ IMPLEMENTED
+**Need**: Embed audio directly in video files during recording (not separate files)  
+**Pattern**: Merge audio tracks into video during frame-to-video conversion  
+**Implementation**:
+```javascript
+// convert-frames-to-video handler
+if (audioFiles.length > 0) {
+  audioFiles.forEach((audioFile, index) => {
+    command = command.input(audioFile);
+    audioInputLabels.push(`[${index + 1}:a]`);
+  });
+  
+  // Mix all audio tracks
+  if (audioInputLabels.length > 1) {
+    audioFilters.push(`${audioInputLabels.join('')}amix=inputs=${audioInputLabels.length}:duration=longest[a]`);
+  }
+  
+  command = command.complexFilter(audioFilters.join(';'));
+  command = command.outputOptions('-map', '0:v');
+  command = command.outputOptions('-map', '[a]');
+}
+
+// Clean up temporary audio files after merging
+audioFiles.forEach(audioFile => fs.unlinkSync(audioFile));
+```
+**Why This Works**: Single video file with embedded audio simplifies import/export workflow, ensures audio stays synchronized with video.
+
+### 5. Video Audio Extraction Pattern ✅ IMPLEMENTED
+**Need**: Extract audio from video clips during export (videos may have embedded audio)  
+**Pattern**: Probe for audio, extract from video inputs, apply timeline delays, mix with standalone audio  
+**Implementation**:
+```javascript
+// Probe video clips for audio
+const videoClipsWithAudio = await Promise.all(videoClips.map(async (clip) => ({
+  ...clip,
+  hasAudio: await hasAudio(clip.inputPath)
+})));
+
+// Extract audio from video inputs based on composition type
+if (needsConcat) {
+  // Extract from [0:a] (concat result)
+  audioFilters.push(`[0:a]adelay=${delay}ms[a_video]`);
+} else if (needsOverlay) {
+  // Extract from each video input [0:a], [1:a], etc.
+  audioFilters.push(`[${videoInputIndex}:a]adelay=${delay}ms[a_video_${i}]`);
+} else {
+  // Single clip: extract from [0:a]
+  audioFilters.push(`[0:a]adelay=${delay}ms[a_video]`);
+}
+
+// Mix video audio with standalone audio clips
+allAudioTracks = [...videoAudioTracks, ...standaloneAudioTracks];
+audioFilters.push(`${allAudioTracks.join('')}amix=inputs=${allAudioTracks.length}:duration=longest[a]`);
+```
+**Why This Works**: Ensures exported videos include audio from recorded clips, maintains timeline positioning, mixes multiple audio sources correctly.
+
+### 6. Clip State Management (In Progress)
 **Pattern**: Single source of truth for clip data  
 **State Structure**:
 ```javascript
@@ -136,7 +219,9 @@ useEffect(() => {
   thumbnailPath: string,
   trimStart: number,
   trimEnd: number,
-  position: number
+  position: number,
+  lane: string,  // Lane ID for grouping
+  type: 'video' | 'audio'  // Clip type
 }
 ```
 

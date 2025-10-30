@@ -89,6 +89,10 @@
 - ✅ Respects timeline positions with adelay for audio
 - ✅ Adds black frame padding before/after video as needed
 - ✅ Dynamically handles inputs with/without audio streams to prevent FFmpeg errors
+- ✅ **Sequential clip concatenation** - Clips on same lane export back-to-back sequentially
+- ✅ **Lane-based grouping** - Export groups clips by lane, concatenates same-lane, overlays different-lane
+- ✅ **Video audio extraction** - Extracts and includes audio from video clips with embedded audio
+- ✅ **Audio timeline positioning** - Video audio delayed correctly based on timelineStart
 
 ### Advanced Features (Stretch)
 - ✅ **Webcam Recording** (COMPLETE - Canvas + FFmpeg approach)
@@ -101,19 +105,25 @@
   - ✅ Automatic import of recorded videos into timeline
 - ✅ **Screen Recording** (COMPLETE - desktopCapturer + Canvas + FFmpeg approach)
   - ✅ Implemented ScreenRecorder component using desktopCapturer API
+  - ✅ Fixed desktop source detection - requests both 'screen' and 'window' types
+  - ✅ Uses IPC handler for reliable source detection
   - ✅ Uses getUserMedia with Electron-specific constraints for screen capture
   - ✅ Canvas frame capture at 30 FPS (same as webcam)
   - ✅ FFmpeg conversion to MP4 working perfectly
   - ✅ Screen recording tested and functional end-to-end
-  - ✅ Automatic import of recorded screen videos into timeline 
+  - ✅ Automatic import of recorded screen videos into timeline
+  - ✅ **Screen Only mode** - Dedicated component with optional microphone support
+  - ✅ Audio embedded in video file (no separate audio files) 
 - ✅ **Simultaneous Recording** (COMPLETE - Loom-style screen + webcam + audio)
   - ✅ Created SimultaneousRecorder component with PiP overlay
   - ✅ Picture-in-picture webcam overlay in bottom-right corner
   - ✅ Enhanced system audio capture using SoX (sox-audio package)
-  - ✅ Native microphone capture using mic package
+  - ✅ Native microphone capture using MediaRecorder API
   - ✅ Audio mixing and synchronization with FFmpeg
   - ✅ UI with audio source selection and recording mode options
-  - ✅ End-to-end simultaneous recording workflow ready for testing
+  - ✅ **Audio embedded in video** - Microphone and system audio merged into single video file
+  - ✅ **Temporary file cleanup** - All audio files cleaned up after merging
+  - ✅ End-to-end simultaneous recording workflow working perfectly
 - ✅ **Multi-Lane Timeline** (COMPLETE - Final Cut Pro-style)
   - ✅ Created MultiLaneTimeline.jsx component
   - ✅ 3 default lanes (Video + 2 Audio) with dynamic lane creation
@@ -147,8 +157,9 @@
 **Core Features**: ✅ 100% complete  
 **Export**: ✅ Working (with progress indicator and lane visibility support)  
 **Webcam Recording**: ✅ Working (Canvas + FFmpeg)  
-**Screen Recording**: ✅ Working (desktopCapturer + Canvas + FFmpeg)  
-**Simultaneous Recording**: ✅ Working (Loom-style PiP + Audio)  
+**Screen Recording**: ✅ Working (desktopCapturer + Canvas + FFmpeg, fixed source detection)  
+**Screen Only Recording**: ✅ Working (Screen + optional microphone, audio embedded)
+**Simultaneous Recording**: ✅ Working (Loom-style PiP + Audio embedded in video)  
 **Multi-Lane Timeline**: ✅ Working (Final Cut Pro-style with thumbnails)  
 **Sequential Playback**: ✅ Working (seamless clip transitions + looping)  
 **Multi-Track Audio**: ✅ Working (simultaneous overlapping audio playback)  
