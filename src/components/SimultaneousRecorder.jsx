@@ -642,16 +642,15 @@ function SimultaneousRecorder({ onRecordingComplete }) {
         }
         
         // Save MediaRecorder microphone audio (WebM format) - convert to WAV using FFmpeg
+        const tempWebmPath = outputPath.replace('.mp4', '_microphone_temp.webm');
+        const micWavPath = outputPath.replace('.mp4', '_microphone.wav');
+        
         if (microphoneAudioChunksRef.current.length > 0) {
           console.log(`🎤 Saving MediaRecorder microphone audio: ${microphoneAudioChunksRef.current.length} WebM chunks`);
           
           // Combine all MediaRecorder Blob chunks into single WebM blob
           const webmBlob = new Blob(microphoneAudioChunksRef.current, { type: 'audio/webm' });
           console.log(`🎤 Combined WebM blob size: ${webmBlob.size} bytes`);
-          
-          // Save WebM file temporarily, then convert to WAV using FFmpeg
-          const tempWebmPath = outputPath.replace('.mp4', '_microphone_temp.webm');
-          const micWavPath = outputPath.replace('.mp4', '_microphone.wav');
           
           // Convert Blob to array buffer for IPC
           const arrayBuffer = await webmBlob.arrayBuffer();
@@ -675,6 +674,7 @@ function SimultaneousRecorder({ onRecordingComplete }) {
             if (convertResult.success) {
               audioFiles.push(micWavPath);
               console.log(`✅ MediaRecorder microphone converted: ${webmBlob.size} bytes WebM -> WAV`);
+              // Note: Temp WebM will be cleaned up by convert-frames-to-video handler after merging
             } else {
               console.error('❌ Failed to convert WebM to WAV:', convertResult.error);
             }
@@ -694,25 +694,30 @@ function SimultaneousRecorder({ onRecordingComplete }) {
           }
         }
         
-        // Convert frames to video using FFmpeg (video WITHOUT audio)
-        // Audio files will be kept separate and imported into timeline separately
+        // Convert frames to video using FFmpeg (WITH audio embedded)
+        // Audio files will be merged into the video file and then deleted
+        console.log(`🎬 Converting ${combinedFramesRef.current.length} frames to video with ${audioFiles.length} audio track(s):`, audioFiles);
+        
         const result = await ipcRenderer.invoke('convert-frames-to-video', {
           outputPath: outputPath,
           frameRate: 30,
-          audioFiles: audioFiles
+          audioFiles: audioFiles  // These will be merged into video and deleted
         });
         
         if (result.success) {
-          // Return video path and separate audio file paths for timeline import
+          // Audio files are now embedded in video and cleaned up by convert-frames-to-video handler
+          console.log(`✅ Video created with embedded audio: ${outputPath}`);
+          console.log(`🧹 Temporary audio files cleaned up (embedded in video)`);
+          
+          // Return single video path with audio embedded
           const recordingData = {
-            videoPath: outputPath,
-            audioFiles: result.audioFiles || audioFiles // Return audio file paths
+            videoPath: result.videoPath || outputPath  // Single video file with audio embedded
           };
           
-          alert(`Simultaneous recording saved successfully!\nVideo: ${outputPath}\nAudio tracks will be imported separately into timeline.`);
+          alert(`Simultaneous recording saved successfully!\nVideo with embedded audio: ${recordingData.videoPath}`);
           
           if (onRecordingComplete) {
-            // Pass both video and audio file paths
+            // Pass single video file path (audio is embedded)
             onRecordingComplete(recordingData);
           }
         } else {

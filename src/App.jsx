@@ -517,10 +517,10 @@ function App() {
       const { ipcRenderer } = window.require('electron');
       const newClips = [];
       
+      // Handle both old format (string path) and new format (object with videoPath)
       let videoPath = typeof recordingData === 'string' ? recordingData : recordingData.videoPath;
-      let audioFiles = typeof recordingData === 'object' ? (recordingData.audioFiles || []) : [];
       
-      // Import video
+      // Import video (audio is now embedded in the video file)
       if (videoPath) {
         const duration = await ipcRenderer.invoke('get-video-duration', videoPath);
         const thumbnailPath = await ipcRenderer.invoke('generate-thumbnail', videoPath);
@@ -538,21 +538,11 @@ function App() {
         });
       }
       
-      // Import audios
-      audioFiles.forEach(async (audioPath, index) => {
-        const duration = await ipcRenderer.invoke('get-audio-duration', audioPath);
-        newClips.push({
-          id: Date.now() + index + 1,
-          filePath: audioPath,
-          duration,
-          trimStart: 0,
-          trimEnd: duration,
-          position: 0,
-          lane: index === 0 ? 'audio1' : 'audio2',
-          type: 'audio',
-          label: index === 0 ? 'System Audio' : 'Microphone'
-        });
-      });
+      // Note: Audio is now embedded in the video file, so no separate audio imports needed
+      // For backwards compatibility, still check for audioFiles but don't import them
+      if (recordingData.audioFiles && recordingData.audioFiles.length > 0) {
+        console.log('Note: Audio files provided but audio is already embedded in video:', recordingData.audioFiles);
+      }
       
       setClips(prev => [...prev, ...newClips]);
     } catch (error) {

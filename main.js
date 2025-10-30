@@ -766,23 +766,83 @@ ipcMain.handle('export-multi-lane', async (event, { outputPath, videoClips, audi
         const audioFilters = [];
         const delayedAudioLabels = [];
         
-        // Get video audio if available (from base video/composition)
-        // For now, skip video audio extraction - TODO: Add support
+        // Extract audio from video clips (videos may have embedded audio from simultaneous recording)
+        if (needsConcat && !needsOverlay) {
+          // Concat mode: Audio from concatenated video (input 0)
+          // Check if any of the concatenated clips have audio
+          const laneId = laneIds[0];
+          const clips = videoLanes[laneId];
+          const clipsWithAudio = clips.filter(c => c.hasAudio);
+          
+          if (clipsWithAudio.length > 0) {
+            // Concat demuxer preserves audio from all clips automatically
+            // Extract audio from input 0 (the concat result)
+            // Delay based on first clip's timelineStart
+            const firstClipDelay = Math.max(0, (clips[0].timelineStart - timelineStart) * 1000);
+            const videoAudioLabel = `[a_video_concat]`;
+            audioFilters.push(`[0:a]adelay=${Math.round(firstClipDelay)}|${Math.round(firstClipDelay)}${videoAudioLabel}`);
+            delayedAudioLabels.push(videoAudioLabel);
+            console.log(`🎵 Extracting audio from concatenated video (input 0) with delay ${firstClipDelay}ms`);
+          }
+        } else if (needsOverlay) {
+          // Overlay mode: Extract audio from each video input
+          let videoInputIndex = 0;
+          
+          // Base lane audio
+          const baseLane = laneIds[0];
+          const baseClips = videoLanes[baseLane];
+          if (baseClips.length > 0 && baseClips[0].hasAudio) {
+            const baseDelay = Math.max(0, (baseClips[0].timelineStart - timelineStart) * 1000);
+            const baseAudioLabel = `[a_video_base]`;
+            audioFilters.push(`[${videoInputIndex}:a]adelay=${Math.round(baseDelay)}|${Math.round(baseDelay)}${baseAudioLabel}`);
+            delayedAudioLabels.push(baseAudioLabel);
+            console.log(`🎵 Extracting audio from base video (input ${videoInputIndex}) with delay ${baseDelay}ms`);
+          }
+          videoInputIndex++;
+          
+          // Overlay lanes audio
+          for (let i = 1; i < laneIds.length; i++) {
+            const overlayLane = laneIds[i];
+            const overlayClips = videoLanes[overlayLane];
+            if (overlayClips.length > 0 && overlayClips[0].hasAudio) {
+              const overlayDelay = Math.max(0, (overlayClips[0].timelineStart - timelineStart) * 1000);
+              const overlayAudioLabel = `[a_video_overlay${i}]`;
+              audioFilters.push(`[${videoInputIndex}:a]adelay=${Math.round(overlayDelay)}|${Math.round(overlayDelay)}${overlayAudioLabel}`);
+              delayedAudioLabels.push(overlayAudioLabel);
+              console.log(`🎵 Extracting audio from overlay video ${i} (input ${videoInputIndex}) with delay ${overlayDelay}ms`);
+            }
+            videoInputIndex++;
+          }
+        } else {
+          // Single clip mode: Extract audio from input 0
+          const clip = videoClipsWithAudio[0];
+          if (clip.hasAudio) {
+            const clipDelay = Math.max(0, (clip.timelineStart - timelineStart) * 1000);
+            const videoAudioLabel = `[a_video_single]`;
+            audioFilters.push(`[0:a]adelay=${Math.round(clipDelay)}|${Math.round(clipDelay)}${videoAudioLabel}`);
+            delayedAudioLabels.push(videoAudioLabel);
+            console.log(`🎵 Extracting audio from single video clip (input 0) with delay ${clipDelay}ms`);
+          }
+        }
         
-        // Apply delays to audio inputs
+        // Apply delays to standalone audio clip inputs
         audioInputs.forEach((audioInput, index) => {
           const delayedLabel = `[a_delayed${index}]`;
           audioFilters.push(`[${audioInput.inputIndex}:a]adelay=${Math.round(audioInput.delay)}|${Math.round(audioInput.delay)}${delayedLabel}`);
           delayedAudioLabels.push(delayedLabel);
         });
 
-        // Mix all audio tracks
+        // Mix all audio tracks (video audio + standalone audio clips)
         if (delayedAudioLabels.length > 0) {
           if (delayedAudioLabels.length > 1) {
             audioFilters.push(`${delayedAudioLabels.join('')}amix=inputs=${delayedAudioLabels.length}:duration=longest[a]`);
+            console.log(`🎵 Mixing ${delayedAudioLabels.length} audio tracks together (video + standalone)`);
           } else {
             audioFilters.push(`${delayedAudioLabels[0]}acopy[a]`);
+            console.log(`🎵 Using single audio track`);
           }
+        } else {
+          console.warn(`⚠️ No audio tracks found - export will have no audio`);
         }
 
         // Combine video and audio filters
@@ -819,11 +879,19 @@ ipcMain.handle('export-multi-lane', async (event, { outputPath, videoClips, audi
         // Apply codecs and quality
         command
           .videoCodec('libx264')
-          .audioCodec('aac')
           .outputOptions('-preset', 'fast')
           .outputOptions('-crf', '23')
           .outputOptions('-pix_fmt', 'yuv420p')
           .outputOptions('-r', '30'); // Standardize to 30fps
+        
+        // Only add audio codec if we have audio tracks
+        if (delayedAudioLabels.length > 0) {
+          command = command.audioCodec('aac');
+          command = command.outputOptions('-b:a', '192k');
+          console.log(`  ✅ Audio codec (AAC) will be applied to output`);
+        } else {
+          console.log(`  ⚠️ No audio tracks - skipping audio codec`);
+        }
 
         // Apply scaling
         const scaleNum = scaleResolution ? parseInt(scaleResolution, 10) : null;
@@ -980,41 +1048,87 @@ ipcMain.handle('save-frame-to-temp', async (event, { frameIndex, frameData }) =>
 });
 
 // IPC handler to convert frames to video using FFmpeg
-// Returns video WITHOUT audio - audio files are kept separate for timeline import
+// Merges audio files into the video - returns single video file with embedded audio
 ipcMain.handle('convert-frames-to-video', async (event, { outputPath, frameRate = 30, audioFiles = [] }) => {
   return new Promise((resolve, reject) => {
     try {
       const tempDir = path.join(__dirname, 'temp_frames');
       const inputPattern = path.join(tempDir, 'frame_%06d.png');
       
-      console.log('Converting frames to video (NO AUDIO):', inputPattern, '->', outputPath);
-      console.log('Audio files will be kept separate:', audioFiles);
+      console.log('Converting frames to video WITH audio:', inputPattern, '->', outputPath);
+      console.log('Audio files to merge:', audioFiles);
       
-      // Create video WITHOUT audio - audio will be imported separately into timeline
+      // Build FFmpeg command
       let command = ffmpeg(inputPattern)
         .inputOptions([
           `-r ${frameRate}`,  // Input frame rate
           '-framerate 30'
-        ])
-        .outputOptions([
-          '-c:v libx264',
-          '-pix_fmt yuv420p',
-          '-r 30',  // Output frame rate
-          '-preset fast',
-          '-crf 23',
-          '-movflags +faststart'  // Optimize for web playback
-        ])
-        .output(outputPath);
+        ]);
+      
+      // Add audio inputs if available
+      const audioFilters = [];
+      const audioInputLabels = [];
+      
+      if (audioFiles.length > 0) {
+        console.log(`🎵 Merging ${audioFiles.length} audio track(s) into video...`);
+        // Add each audio file as input
+        audioFiles.forEach((audioFile, index) => {
+          if (fs.existsSync(audioFile)) {
+            command = command.input(audioFile);
+            audioInputLabels.push(`[${index + 1}:a]`);
+            console.log(`  ✅ Added audio input ${index + 1}: ${path.basename(audioFile)}`);
+          } else {
+            console.warn(`  ⚠️ Audio file not found: ${audioFile}`);
+          }
+        });
+        
+        // Mix all audio tracks together
+        if (audioInputLabels.length > 0) {
+          if (audioInputLabels.length > 1) {
+            // Multiple audio tracks - mix them
+            audioFilters.push(`${audioInputLabels.join('')}amix=inputs=${audioInputLabels.length}:duration=longest[a]`);
+            console.log(`  🎵 Mixing ${audioInputLabels.length} audio tracks together`);
+          } else {
+            // Single audio track - pass through
+            audioFilters.push(`${audioInputLabels[0]}acopy[a]`);
+            console.log(`  🎵 Using single audio track`);
+          }
+        }
+      }
+      
+      // Build output options
+      const outputOptions = [
+        '-c:v libx264',
+        '-pix_fmt yuv420p',
+        '-r 30',  // Output frame rate
+        '-preset fast',
+        '-crf 23',
+        '-movflags +faststart'  // Optimize for web playback
+      ];
+      
+      // Add audio codec if we have audio
+      if (audioFilters.length > 0) {
+        outputOptions.push('-c:a', 'aac');
+        outputOptions.push('-b:a', '192k');
+        command = command.complexFilter(audioFilters.join(';'));
+        command = command.outputOptions('-map', '0:v');
+        command = command.outputOptions('-map', '[a]');
+        console.log(`  ✅ Audio will be embedded in video with AAC codec`);
+      } else {
+        console.log(`  ⚠️ No audio filters - creating video without audio`);
+      }
+      
+      command = command.outputOptions(outputOptions).output(outputPath);
 
       command
         .on('start', (commandLine) => {
-          console.log('FFmpeg started (video only, no audio):', commandLine);
+          console.log('FFmpeg started (video with audio):', commandLine);
         })
         .on('progress', (progress) => {
           console.log('FFmpeg progress:', progress);
         })
         .on('end', () => {
-          console.log('FFmpeg conversion complete (video without audio)');
+          console.log('FFmpeg conversion complete (video with embedded audio)');
           
           // Clean up temp frames
           if (fs.existsSync(tempDir)) {
@@ -1025,17 +1139,44 @@ ipcMain.handle('convert-frames-to-video', async (event, { outputPath, frameRate 
             console.log('Temp frames cleaned up');
           }
           
-          // DO NOT clean up audio files - they will be imported separately into timeline
-          console.log('Audio files kept separate for timeline import:', audioFiles);
+          // Clean up audio files since they're now embedded in video
+          // Also clean up any temp WebM files (they'll have _microphone_temp.webm suffix)
+          const allAudioFiles = [...audioFiles];
           
-          // Return audio file paths so they can be imported separately
+          // Find and add temp WebM files to cleanup list
+          audioFiles.forEach(audioFile => {
+            if (audioFile.includes('_microphone.wav')) {
+              const tempWebmPath = audioFile.replace('_microphone.wav', '_microphone_temp.webm');
+              if (fs.existsSync(tempWebmPath)) {
+                allAudioFiles.push(tempWebmPath);
+                console.log(`Found temp WebM to clean: ${tempWebmPath}`);
+              }
+            }
+          });
+          
+          allAudioFiles.forEach(audioFile => {
+            try {
+              if (fs.existsSync(audioFile)) {
+                fs.unlinkSync(audioFile);
+                console.log(`🧹 Cleaned up audio file: ${path.basename(audioFile)}`);
+              }
+            } catch (e) {
+              console.warn(`Failed to delete audio file ${audioFile}:`, e);
+            }
+          });
+          
+          console.log(`✅ All temporary audio files cleaned up. Audio is now embedded in: ${outputPath}`);
+          
+          // Return success - audio is now embedded in video
           resolve({ 
-            success: true, 
-            audioFiles: audioFiles // Return audio file paths
+            success: true,
+            videoPath: outputPath  // Single video file with audio embedded
           });
         })
-        .on('error', (err) => {
+        .on('error', (err, stdout, stderr) => {
           console.error('FFmpeg error:', err);
+          console.error('FFmpeg stdout:', stdout);
+          console.error('FFmpeg stderr:', stderr);
           reject(err);
         })
         .run();
