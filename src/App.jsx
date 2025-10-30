@@ -146,7 +146,7 @@ function App() {
     }
   };
 
-  const handleExport = async () => {
+  const handleExport = async (scaleResolution = null) => {
     let ipcRenderer;
     try {
       ipcRenderer = window.require ? window.require('electron').ipcRenderer : null;
@@ -208,7 +208,7 @@ function App() {
           outputPath,
           videoClips,
           audioClips,
-          scaleTo1080p: true // or make configurable
+          scaleResolution // null = source, 720 = 720p, 1080 = 1080p
         });
         setExportProgress(null);
         alert(`Export successful: ${result}`);
@@ -220,6 +220,11 @@ function App() {
       setExportProgress(null);
     }
   };
+
+  // Export handlers for different resolutions
+  const handleExportSource = () => handleExport(null);
+  const handleExport720p = () => handleExport(720);
+  const handleExport1080p = () => handleExport(1080);
 
   // Get ALL clips at a specific timeline position (for simultaneous playback)
   const getClipsAtPosition = (timelinePosition) => {
@@ -631,10 +636,12 @@ function App() {
 
   return (
     <div className="app">
-      <Toolbar 
+      <Toolbar
         onImport={handleImportVideo}
         onImportAudio={handleImportAudio}
-        onExport={handleExport}
+        onExportSource={handleExportSource}
+        onExport720p={handleExport720p}
+        onExport1080p={handleExport1080p}
         canExport={clips.length > 0}
         exportProgress={exportProgress}
         onRecord={() => {

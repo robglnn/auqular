@@ -299,9 +299,14 @@ ipcMain.handle('export-video', async (event, { inputPath, outputPath, startTime,
       .videoCodec('libx264')
       .audioCodec('aac');
 
-    if (scaleTo1080p) {
+    const scaleNum = scaleResolution ? parseInt(scaleResolution, 10) : null;
+    
+    if (scaleNum === 720) {
+      command = command.videoFilters('scale=1280:720');
+    } else if (scaleNum === 1080) {
       command = command.videoFilters('scale=1920:1080');
     }
+    // scaleResolution = null means source resolution (no scaling)
 
     command
       .outputOptions('-crf', '23') // Quality preset
@@ -323,7 +328,7 @@ ipcMain.handle('export-video', async (event, { inputPath, outputPath, startTime,
   });
 });
 
-ipcMain.handle('export-multi-lane', async (event, { outputPath, videoClips, audioClips, scaleTo1080p = false }) => {
+ipcMain.handle('export-multi-lane', async (event, { outputPath, videoClips, audioClips, scaleResolution = null }) => {
   return new Promise((resolve, reject) => {
     try {
       if (videoClips.length === 0 && audioClips.length === 0) {
@@ -542,26 +547,15 @@ ipcMain.handle('export-multi-lane', async (event, { outputPath, videoClips, audi
           videoMap = videoOutput;
         }
         
-        if (scaleTo1080p) {
-          // Apply scale after padding if needed
-          if (videoMap.includes('[v]') && filters.some(f => f.includes('[v]'))) {
-            // Find the last video filter and modify it
-            const lastVideoFilterIndex = filters.length - 1;
-            const lastFilter = filters[lastVideoFilterIndex];
-            if (lastFilter.includes('[v]')) {
-              const inputLabel = lastFilter.match(/\[([^\]]+)\]/)[0];
-              const outputLabel = lastFilter.includes('[') && lastFilter.split('[').length > 2 
-                ? lastFilter.split('[').pop().replace(']', '')
-                : 'v_scaled';
-              filters[lastVideoFilterIndex] = lastFilter.replace('[v]', '[v_temp]');
-              filters.push(`[v_temp]scale=1920:1080[v]`);
-              videoMap = '[v]';
-            }
-          } else {
-            filters.push(`[0:v]scale=1920:1080[v]`);
-            videoMap = '[v]';
-          }
+        // Apply scaling as a SIMPLE video filter (AFTER complex filter, not part of it)
+        const scaleNum = scaleResolution ? parseInt(scaleResolution, 10) : null;
+        
+        if (scaleNum === 720) {
+          command = command.videoFilters('scale=1280:720');
+        } else if (scaleNum === 1080) {
+          command = command.videoFilters('scale=1920:1080');
         }
+        // scaleResolution = null means source resolution (no scaling)
 
         command
           .save(outputPath)

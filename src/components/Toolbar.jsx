@@ -1,6 +1,6 @@
 import React from 'react';
 
-function Toolbar({ onImport, onExport, canExport, onRecord, onImportAudio, exportProgress }) {
+function Toolbar({ onImport, onExportSource, onExport720p, onExport1080p, canExport, onRecord, onImportAudio, exportProgress }) {
   // Format progress as XX% (double digits, 0-100)
   const formatProgress = (progress) => {
     if (progress === null || progress === undefined) return null;
@@ -19,12 +19,29 @@ function Toolbar({ onImport, onExport, canExport, onRecord, onImportAudio, expor
       <button className="btn btn-primary" onClick={onRecord}>
         Record
       </button>
-      <button 
-        className="btn btn-primary" 
-        onClick={onExport}
+      <button
+        className="btn btn-primary"
+        onClick={onExportSource}
         disabled={!canExport}
+        style={{ marginRight: '2px' }}
       >
         Export MP4
+      </button>
+      <button
+        className="btn btn-primary"
+        onClick={onExport720p}
+        disabled={!canExport}
+        style={{ marginRight: '2px' }}
+      >
+        720p
+      </button>
+      <button
+        className="btn btn-primary"
+        onClick={onExport1080p}
+        disabled={!canExport}
+        style={{ marginRight: '4px' }}
+      >
+        1080p
       </button>
       <div style={{ flex: 1 }} />
       <div style={{ fontSize: '14px', color: '#888', display: 'flex', alignItems: 'center', gap: '8px' }}>
