@@ -1,23 +1,22 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Stage, Layer, Rect, Group, Text, Line, Image } from 'react-konva';
+import { Stage, Layer, Rect, Group, Text, Line, Image, Circle } from 'react-konva';
 import useImage from 'use-image';
 
-const PIXELS_PER_SECOND = 50; // Timeline scale
+// PIXELS_PER_SECOND moved into component (dynamic zoom)
 const LANE_HEIGHT = 80; // Fixed lane height
 const LANE_SPACING = 10; // Space between lanes
 const THUMBNAIL_WIDTH = 60; // Width of thumbnail preview
 const SNAP_DISTANCE = 20; // Pixels for auto-snap
 
-function MultiLaneTimeline({ clips, setClips, currentClip, setCurrentClip, playheadPosition, onSeek }) {
-  const [lanes, setLanes] = useState([
-    { id: 'video', name: 'Video', type: 'video', clips: [], visible: true },
-    { id: 'audio1', name: 'Audio 1', type: 'audio', clips: [], visible: true },
-    { id: 'audio2', name: 'Audio 2', type: 'audio', clips: [], visible: true }
-  ]);
+function MultiLaneTimeline({ clips, setClips, currentClip, setCurrentClip, playheadPosition, setPlayheadPosition, isPlaying, setIsPlaying, onToggleVisibility, lanes, setLanes, onSplitClip, onDeleteClip }) {
   const [dragState, setDragState] = useState(null);
   const [scrollY, setScrollY] = useState(0);
+  const [scrollX, setScrollX] = useState(0);
+  const [zoom, setZoom] = useState(1); // Zoom factor (1 = 50px/sec)
   const stageRef = useRef(null);
   const containerRef = useRef(null);
+  
+  const PIXELS_PER_SECOND = 50 * zoom; // Dynamic zoom
 
   // Update lanes when clips change
   useEffect(() => {
@@ -28,22 +27,9 @@ function MultiLaneTimeline({ clips, setClips, currentClip, setCurrentClip, playh
     setLanes(updatedLanes);
   }, [clips]);
 
-  const addLane = () => {
-    const newLane = {
-      id: `lane_${Date.now()}`,
-      name: `Lane ${lanes.length + 1}`,
-      type: 'video', // Default to video, user can change
-      clips: [],
-      visible: true
-    };
-    setLanes([...lanes, newLane]);
-  };
-
   const toggleLaneVisibility = (laneId) => {
-    setLanes(lanes.map(lane => 
-      lane.id === laneId 
-        ? { ...lane, visible: !lane.visible }
-        : lane
+    setLanes(prev => prev.map(lane => 
+      lane.id === laneId ? { ...lane, visible: !lane.visible } : lane
     ));
   };
 
@@ -126,7 +112,7 @@ function MultiLaneTimeline({ clips, setClips, currentClip, setCurrentClip, playh
   };
 
   const getClipProps = (clip) => {
-    const x = clip.position * PIXELS_PER_SECOND;
+    const x = (clip.position * PIXELS_PER_SECOND) - scrollX; // Apply horizontal scroll
     const trimmedDuration = clip.trimEnd - clip.trimStart;
     const width = trimmedDuration * PIXELS_PER_SECOND;
     return { x, width, trimStart: clip.trimStart, trimEnd: clip.trimEnd };
@@ -134,16 +120,47 @@ function MultiLaneTimeline({ clips, setClips, currentClip, setCurrentClip, playh
 
   const handleStageClick = (e) => {
     const stage = stageRef.current;
+    if (!stage) return;
     const pointerPos = stage.getPointerPosition();
-    const timelinePosition = pointerPos.x / PIXELS_PER_SECOND;
-    onSeek(timelinePosition);
+    // Account for horizontal scroll
+    const timelinePosition = (pointerPos.x + scrollX) / PIXELS_PER_SECOND;
+    if (setPlayheadPosition && typeof setPlayheadPosition === 'function') {
+      setPlayheadPosition(timelinePosition);
+    }
   };
 
   const handleWheel = (e) => {
-    e.evt.preventDefault();
-    const delta = e.evt.deltaY;
-    const newScrollY = Math.max(0, Math.min(scrollY + delta, getTotalHeight() - 300));
-    setScrollY(newScrollY);
+    const evt = e.evt || e.nativeEvent || e;
+    evt.preventDefault();
+    evt.stopPropagation();
+    
+    // Zoom with Ctrl/Cmd + wheel
+    if (evt.ctrlKey || evt.metaKey) {
+      const delta = evt.deltaY;
+      const newZoom = Math.max(0.25, Math.min(4, zoom - delta * 0.001));
+      setZoom(newZoom);
+    } 
+    // Horizontal scroll with Shift + wheel
+    else if (evt.shiftKey) {
+      const delta = evt.deltaY || evt.deltaX; // Use deltaY when shift pressed
+      // Calculate max scroll based on timeline length
+      const maxClipEnd = clips.length > 0 ? Math.max(...clips.map(clip => 
+        (clip.position + (clip.trimEnd - clip.trimStart)) * PIXELS_PER_SECOND
+      )) : 0;
+      const stageWidth = stageRef.current?.width() || 800;
+      const maxScrollX = Math.max(0, maxClipEnd + 200 - stageWidth);
+      
+      // Use larger multiplier for visible scrolling (was 0.5, now 2.0)
+      const newScrollX = Math.max(0, Math.min(scrollX - delta * 2.0, maxScrollX));
+      setScrollX(newScrollX);
+      console.log('Shift+scroll horizontal - delta:', delta, 'oldScrollX:', scrollX, 'newScrollX:', newScrollX, 'maxScrollX:', maxScrollX);
+    }
+    // Vertical scroll without modifiers
+    else {
+      const delta = evt.deltaY;
+      const newScrollY = Math.max(0, Math.min(scrollY + delta, getTotalHeight() - 300));
+      setScrollY(newScrollY);
+    }
   };
 
   const getVisibleClips = () => {
@@ -153,21 +170,41 @@ function MultiLaneTimeline({ clips, setClips, currentClip, setCurrentClip, playh
 
   // Expose visible clips to parent component
   useEffect(() => {
-    if (onSeek) {
+    if (onToggleVisibility) {
       // This is a hack to pass visible clips info to parent
       // In a real app, you'd use a callback prop
       window.visibleClips = getVisibleClips();
     }
   }, [clips, lanes]);
 
+  // Calculate timeline width for scrollbar
+  const maxClipEnd = clips.length > 0 ? Math.max(...clips.map(clip => 
+    (clip.position + (clip.trimEnd - clip.trimStart)) * PIXELS_PER_SECOND
+  )) : 800;
+  const stageWidth = stageRef.current?.width() || 800;
+  const maxScrollX = Math.max(0, maxClipEnd + 200 - stageWidth);
+  const scrollbarWidth = stageWidth;
+  const scrollbarThumbWidth = Math.max(20, (stageWidth / maxClipEnd) * stageWidth);
+  const scrollbarThumbX = (scrollX / maxScrollX) * (scrollbarWidth - scrollbarThumbWidth);
+
   return (
     <div className="multi-lane-timeline-container" ref={containerRef}>
       <div className="timeline-controls">
-        <button onClick={addLane} className="add-lane-btn">
+        <button onClick={() => setLanes([...lanes, { id: `lane_${Date.now()}`, name: `Lane ${lanes.length + 1}`, type: 'video', clips: [], visible: true }])} className="add-lane-btn">
           + Add Lane
         </button>
+        {currentClip && (
+          <>
+            <button onClick={onSplitClip} className="btn-small" title="Split at playhead (S)">
+              ✂️ Split
+            </button>
+            <button onClick={onDeleteClip} className="btn-small" title="Delete clip (Delete)">
+              🗑️ Delete
+            </button>
+          </>
+        )}
         <div className="lane-count">
-          {lanes.length} lanes
+          {lanes.length} lanes | Zoom: {Math.round(zoom * 100)}% | Scroll: Ctrl+Wheel=zoom, Shift+Wheel=horizontal, Wheel=vertical
         </div>
       </div>
       
@@ -209,14 +246,17 @@ function MultiLaneTimeline({ clips, setClips, currentClip, setCurrentClip, playh
       >
         <Layer>
           {/* Grid lines */}
-          {[...Array(40)].map((_, i) => (
-            <Line
-              key={i}
-              points={[i * 50, 0, i * 50, 300]}
-              stroke="#333"
-              strokeWidth={1}
-            />
-          ))}
+          {[...Array(40)].map((_, i) => {
+            const x = (i * 50 * zoom) - scrollX;
+            return (
+              <Line
+                key={i}
+                points={[x, 0, x, 300]}
+                stroke="#333"
+                strokeWidth={1}
+              />
+            );
+          })}
           
           {/* Lane backgrounds and headers */}
           {lanes.map((lane, laneIndex) => {
@@ -242,7 +282,7 @@ function MultiLaneTimeline({ clips, setClips, currentClip, setCurrentClip, playh
                   x={10}
                   y={y + 5}
                   lane={lane}
-                  onToggleVisibility={toggleLaneVisibility}
+                  onToggleVisibility={onToggleVisibility}
                 />
                 
                 {/* Lane header */}
@@ -310,13 +350,16 @@ function MultiLaneTimeline({ clips, setClips, currentClip, setCurrentClip, playh
                     handleClipDrag(clip.id, newX, newY);
                   }}
                   onClick={() => handleClipClick(clip)}
+                onDblClick={() => {
+                  if (onSplitClip) onSplitClip();
+                }}
                   shadowBlur={5}
                   shadowColor="black"
                   shadowOpacity={0.3}
                 />
                 
-                {/* Video thumbnail preview */}
-                {clip.thumbnailPath && (
+                {/* Video thumbnail preview or audio icon */}
+                {clip.thumbnailPath ? (
                   <ThumbnailPreview
                     x={x + 5}
                     y={y + 5}
@@ -324,17 +367,48 @@ function MultiLaneTimeline({ clips, setClips, currentClip, setCurrentClip, playh
                     height={LANE_HEIGHT - 60}
                     thumbnailPath={clip.thumbnailPath}
                   />
-                )}
+                ) : clip.type === 'audio' ? (
+                  // Audio clip icon
+                  <Group x={x + 15} y={y + 15}>
+                    <Rect
+                      x={0}
+                      y={0}
+                      width={THUMBNAIL_WIDTH - 20}
+                      height={LANE_HEIGHT - 70}
+                      fill="rgba(102, 126, 234, 0.5)"
+                      stroke="#667eea"
+                      strokeWidth={2}
+                      cornerRadius={4}
+                    />
+                    <Text
+                      x={5}
+                      y={15}
+                      text="🎵"
+                      fontSize={24}
+                      align="center"
+                      width={THUMBNAIL_WIDTH - 30}
+                    />
+                  </Group>
+                ) : null}
                 
                 {/* Clip info text */}
                 <Text
-                  x={x + (clip.thumbnailPath ? THUMBNAIL_WIDTH + 10 : 10)}
+                  x={x + (clip.thumbnailPath || clip.type === 'audio' ? THUMBNAIL_WIDTH + 10 : 10)}
                   y={y + 15}
-                  text={`${trimStart.toFixed(1)}s - ${trimEnd.toFixed(1)}s`}
+                  text={clip.label || `${trimStart.toFixed(1)}s - ${trimEnd.toFixed(1)}s`}
                   fontSize={10}
                   fill="white"
                   fontStyle="bold"
                 />
+                {clip.label && (
+                  <Text
+                    x={x + (clip.thumbnailPath || clip.type === 'audio' ? THUMBNAIL_WIDTH + 10 : 10)}
+                    y={y + 30}
+                    text={`${trimStart.toFixed(1)}s - ${trimEnd.toFixed(1)}s`}
+                    fontSize={9}
+                    fill="rgba(255, 255, 255, 0.7)"
+                  />
+                )}
                 
                 {/* Trim handle - start */}
                 <Rect
@@ -385,12 +459,57 @@ function MultiLaneTimeline({ clips, setClips, currentClip, setCurrentClip, playh
           
           {/* Playhead */}
           <Line
-            points={[playheadPosition * PIXELS_PER_SECOND, 0, playheadPosition * PIXELS_PER_SECOND, 300]}
+            points={[(playheadPosition * PIXELS_PER_SECOND) - scrollX, 0, (playheadPosition * PIXELS_PER_SECOND) - scrollX, 300]}
             stroke="#ff0000"
             strokeWidth={2}
           />
         </Layer>
       </Stage>
+      
+      {/* Horizontal Scrollbar */}
+      {maxScrollX > 0 && (
+        <div style={{
+          position: 'relative',
+          width: '100%',
+          height: '20px',
+          backgroundColor: '#222',
+          borderTop: '1px solid #444',
+          marginTop: '5px'
+        }}>
+          <div
+            style={{
+              position: 'absolute',
+              left: `${scrollbarThumbX}px`,
+              width: `${scrollbarThumbWidth}px`,
+              height: '18px',
+              backgroundColor: '#555',
+              cursor: 'grab',
+              borderRadius: '2px',
+              margin: '1px'
+            }}
+            onMouseDown={(e) => {
+              const startX = e.clientX;
+              const startScrollX = scrollX;
+              
+              const handleMouseMove = (moveEvent) => {
+                const deltaX = moveEvent.clientX - startX;
+                const scrollRatio = maxScrollX / (scrollbarWidth - scrollbarThumbWidth);
+                const newScrollX = Math.max(0, Math.min(maxScrollX, startScrollX + (deltaX * scrollRatio)));
+                setScrollX(newScrollX);
+                console.log('Scrollbar dragged - scrollX:', newScrollX);
+              };
+              
+              const handleMouseUp = () => {
+                document.removeEventListener('mousemove', handleMouseMove);
+                document.removeEventListener('mouseup', handleMouseUp);
+              };
+              
+              document.addEventListener('mousemove', handleMouseMove);
+              document.addEventListener('mouseup', handleMouseUp);
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -439,64 +558,23 @@ function LaneToolbar({ x, y, lane, onToggleVisibility }) {
         x={0}
         y={0}
         width={60}
-        height={30}
-        fill="rgba(0, 0, 0, 0.7)"
+        height={LANE_HEIGHT - 10}
+        fill="#222"
         cornerRadius={4}
-        stroke="#444"
-        strokeWidth={1}
       />
       
-      {/* Eye button */}
-      <Group
-        x={5}
-        y={5}
+      {/* Eye icon for visibility toggle */}
+      <Circle
+        x={20}
+        y={20}
+        radius={12}
+        fill={lane.visible ? '#00ff00' : '#ff0000'}
         onClick={handleEyeClick}
-        onTap={handleEyeClick}
-      >
-        {/* Eye icon */}
-        <Rect
-          x={0}
-          y={0}
-          width={20}
-          height={20}
-          fill={lane.visible ? "#007acc" : "#666"}
-          cornerRadius={3}
-          stroke={lane.visible ? "#00aaff" : "#888"}
-          strokeWidth={1}
-        />
-        
-        {/* Eye symbol */}
-        <Text
-          x={5}
-          y={12}
-          text="👁"
-          fontSize={12}
-          fill={lane.visible ? "white" : "#aaa"}
-        />
-      </Group>
-      
-      {/* Placeholder for future buttons */}
-      <Rect
-        x={30}
-        y={5}
-        width={20}
-        height={20}
-        fill="rgba(255, 255, 255, 0.1)"
-        cornerRadius={3}
-        stroke="#444"
-        strokeWidth={1}
+        draggable={false}
       />
-      
-      <Rect
-        x={55}
-        y={5}
-        width={20}
-        height={20}
-        fill="rgba(255, 255, 255, 0.1)"
-        cornerRadius={3}
-        stroke="#444"
-        strokeWidth={1}
-      />
+      {/* Add 2 more button placeholders */}
+      <Circle x={40} y={20} radius={12} fill="#444" />
+      <Circle x={60} y={20} radius={12} fill="#444" />
     </Group>
   );
 }

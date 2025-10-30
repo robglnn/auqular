@@ -96,3 +96,8 @@ packages/
 # Cursor specific
 .cursor/
 
+# Binaries folder
+/bin/
+
+#SoX Binary
+!sox.exe

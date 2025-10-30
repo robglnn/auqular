@@ -24,10 +24,9 @@ function SimultaneousRecorder({ onRecordingComplete }) {
   const combinedCanvasRef = useRef(null);
   const combinedFramesRef = useRef([]);
   
-  // Audio refs
-  const audioContextRef = useRef(null);
+  // Audio refs - MediaRecorder approach (same as RecordingPanel)
   const microphoneStreamRef = useRef(null);
-  const audioDataRef = useRef([]);
+  const microphoneAudioChunksRef = useRef([]);
   
   const timerRef = useRef(null);
   const recordingActiveRef = useRef(false);
@@ -39,24 +38,18 @@ function SimultaneousRecorder({ onRecordingComplete }) {
       
       const { ipcRenderer } = window.require('electron');
       
-      // Start native audio recording if enabled
+      // Start native system audio recording if enabled (microphone uses Web Audio API from webcam stream)
       if (audioSources.systemAudio) {
         const systemAudioResult = await ipcRenderer.invoke('start-system-audio-recording');
         if (!systemAudioResult.success) {
           console.warn('Failed to start system audio recording:', systemAudioResult.error);
-          alert('System audio recording is not available. Please install SoX or use microphone only.\n\nContinuing with microphone audio only.');
-          // Disable system audio for this session
+          // Don't show alert - just disable system audio silently
           setAudioSources(prev => ({ ...prev, systemAudio: false }));
         }
       }
       
-      if (audioSources.microphone) {
-        const micResult = await ipcRenderer.invoke('start-microphone-recording');
-        if (!micResult.success) {
-          console.warn('Failed to start microphone recording:', micResult.error);
-          alert('Warning: Microphone recording failed. Continuing with video only.');
-        }
-      }
+      // NOTE: Microphone audio is captured via Web Audio API from webcam stream below
+      // No need to start native microphone recording - we use getUserMedia audio track
       
       // Get desktop sources for screen recording
       const sources = await ipcRenderer.invoke('get-desktop-sources');
@@ -79,14 +72,14 @@ function SimultaneousRecorder({ onRecordingComplete }) {
         }
       });
       
-      // Start webcam capture (without audio since we're using native recording)
+      // Start webcam capture WITH audio for microphone
       const webcamStream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 640 },
           height: { ideal: 480 },
           frameRate: { ideal: 30 }
         },
-        audio: false // Use native audio recording instead
+        audio: audioSources.microphone // Capture microphone via getUserMedia
       });
       
       console.log('Both streams obtained successfully');
@@ -129,6 +122,82 @@ function SimultaneousRecorder({ onRecordingComplete }) {
       webcamVideoRef.current = webcamVideo;
       webcamStreamRef.current = webcamStream;
       
+      // SOLUTION 1 (BEST): Use MediaRecorder API on webcam audio track - EXACTLY like RecordingPanel does (PROVEN TO WORK!)
+      // This is the SAME technology that successfully captures audio in webcam-only recording
+      if (audioSources.microphone) {
+        const audioTracks = webcamStream.getAudioTracks();
+        console.log(`🎤 [SOLUTION 1] Setting up microphone capture - found ${audioTracks.length} audio track(s)`);
+        
+        if (audioTracks.length > 0) {
+          // CRITICAL: Video element MUST be playing to keep audio track alive (same as RecordingPanel)
+          // The webcamVideo element above already does this, but ensure it's ready
+          await new Promise((resolve) => {
+            if (webcamVideo.readyState >= 2) { // HAVE_CURRENT_DATA
+              resolve();
+            } else {
+              webcamVideo.onloadedmetadata = resolve;
+            }
+          });
+          
+          // Ensure video is playing to keep stream active
+          if (webcamVideo.paused) {
+            await webcamVideo.play();
+          }
+          
+          // Extract audio track and create audio-only stream (MediaRecorder needs a stream)
+          const audioTrack = audioTracks[0];
+          audioTrack.enabled = true;
+          console.log(`Audio track: enabled=${audioTrack.enabled}, muted=${audioTrack.muted}, readyState=${audioTrack.readyState}, label=${audioTrack.label}`);
+          
+          // Create audio-only MediaStream for MediaRecorder
+          const audioStream = new MediaStream([audioTrack]);
+          
+          // CRITICAL: Use MediaRecorder API (same as RecordingPanel - PROVEN TO WORK!)
+          const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/webm;codecs=opus';
+          console.log(`Using MediaRecorder with mimeType: ${mimeType}`);
+          
+          const audioRecorder = new MediaRecorder(audioStream, {
+            mimeType: mimeType
+          });
+          
+          microphoneAudioChunksRef.current = [];
+          
+          audioRecorder.ondataavailable = (event) => {
+            if (!recordingActiveRef.current) return;
+            
+            if (event.data && event.data.size > 0) {
+              microphoneAudioChunksRef.current.push(event.data);
+              console.log(`🎤 MediaRecorder audio chunk: ${event.data.size} bytes, total: ${microphoneAudioChunksRef.current.length} chunks`);
+            }
+          };
+          
+          audioRecorder.onerror = (event) => {
+            console.error('❌ MediaRecorder error:', event.error);
+          };
+          
+          audioRecorder.onstart = () => {
+            console.log('✅ MediaRecorder started successfully! State:', audioRecorder.state);
+          };
+          
+          audioRecorder.onstop = () => {
+            console.log(`🎤 MediaRecorder stopped. Total chunks: ${microphoneAudioChunksRef.current.length}`);
+            const totalSize = microphoneAudioChunksRef.current.reduce((sum, chunk) => sum + chunk.size, 0);
+            console.log(`🎤 Total audio data: ${totalSize} bytes`);
+          };
+          
+          // Start recording with timeslice (like RecordingPanel does)
+          audioRecorder.start(1000); // Collect data every 1 second
+          
+          // Store reference for cleanup
+          microphoneStreamRef.current = { recorder: audioRecorder, stream: audioStream };
+          
+          console.log('✅ Microphone capture started using MediaRecorder API (PROVEN SOLUTION from RecordingPanel)');
+        } else {
+          console.error('❌ Microphone requested but webcam stream has NO audio tracks!');
+          console.error('All tracks:', webcamStream.getTracks().map(t => ({ kind: t.kind, enabled: t.enabled, readyState: t.readyState })));
+        }
+      }
+      
       // Create combined canvas for PiP effect
       const combinedCanvas = document.createElement('canvas');
       combinedCanvas.width = screenVideo.videoWidth;
@@ -138,12 +207,12 @@ function SimultaneousRecorder({ onRecordingComplete }) {
       const ctx = combinedCanvas.getContext('2d');
       combinedFramesRef.current = [];
       
-      // Audio recording is now handled natively via IPC
-      
-      console.log('Starting combined frame capture at 30 FPS...');
+      // Start recording state BEFORE frame capture to ensure audio capture works
       setIsRecording(true);
       setRecordingTime(0);
       recordingActiveRef.current = true;
+      
+      console.log('Starting combined frame capture at 30 FPS...');
       
       // Start combined frame capture loop
       let frameCount = 0;
@@ -265,18 +334,53 @@ function SimultaneousRecorder({ onRecordingComplete }) {
       webcamStreamRef.current = null;
     }
 
-    // Stop native audio recording
+    // Stop MediaRecorder microphone capture
+    const { ipcRenderer } = window.require('electron');
+    
+    if (microphoneStreamRef.current && microphoneStreamRef.current.recorder) {
+      try {
+        const recorder = microphoneStreamRef.current.recorder;
+        
+        // Stop MediaRecorder
+        if (recorder.state === 'recording' || recorder.state === 'paused') {
+          recorder.stop();
+          console.log('Stopping MediaRecorder microphone capture...');
+          
+          // Wait for onstop event (MediaRecorder is async)
+          await new Promise((resolve) => {
+            if (recorder.state === 'inactive') {
+              resolve();
+            } else {
+              recorder.onstop = resolve;
+              setTimeout(resolve, 1000); // Timeout after 1 second
+            }
+          });
+        }
+        
+        // Stop audio track
+        if (microphoneStreamRef.current.stream) {
+          microphoneStreamRef.current.stream.getTracks().forEach(track => track.stop());
+        }
+        
+        console.log(`🎤 MediaRecorder stopped. Total chunks: ${microphoneAudioChunksRef.current.length}`);
+      } catch (e) {
+        console.warn('Error stopping MediaRecorder microphone capture:', e);
+      }
+      microphoneStreamRef.current = null;
+    }
+    
+    const totalSize = microphoneAudioChunksRef.current.reduce((sum, chunk) => sum + (chunk.size || 0), 0);
+    console.log(`🎤 Microphone audio collected: ${microphoneAudioChunksRef.current.length} chunks, ${totalSize} bytes`);
+    
+    // Stop native audio recording (fallback)
     try {
-      const { ipcRenderer } = window.require('electron');
       await ipcRenderer.invoke('stop-audio-recording');
     } catch (error) {
-      console.error('Error stopping audio recording:', error);
+      console.error('Error stopping native audio recording:', error);
     }
 
     // Save frames and convert to video with FFmpeg
     try {
-      const { ipcRenderer } = window.require('electron');
-      
       // Get save location first
       const outputPath = await ipcRenderer.invoke('show-record-save-dialog');
       
@@ -298,7 +402,10 @@ function SimultaneousRecorder({ onRecordingComplete }) {
         console.log(`Saved ${savedCount} combined frames to temp directory`);
         
         // Save audio data if available
+        // IMPORTANT: Order matters - system audio first, then microphone
+        // This ensures system audio goes to 'audio1' lane and microphone to 'audio2' lane
         let audioFiles = [];
+        
         if (audioSources.systemAudio) {
           const systemAudioPath = outputPath.replace('.mp4', '_system_audio.wav');
           const systemAudioResult = await ipcRenderer.invoke('save-audio-data', {
@@ -306,12 +413,53 @@ function SimultaneousRecorder({ onRecordingComplete }) {
             audioType: 'systemAudio'
           });
           if (systemAudioResult.success) {
-            audioFiles.push(systemAudioPath);
-            console.log('System audio saved successfully');
+            audioFiles.push(systemAudioPath); // First audio = audio1 lane
+            console.log('System audio saved successfully:', systemAudioPath);
           }
         }
         
-        if (audioSources.microphone) {
+        // Save MediaRecorder microphone audio (WebM format) - convert to WAV using FFmpeg
+        if (microphoneAudioChunksRef.current.length > 0) {
+          console.log(`🎤 Saving MediaRecorder microphone audio: ${microphoneAudioChunksRef.current.length} WebM chunks`);
+          
+          // Combine all MediaRecorder Blob chunks into single WebM blob
+          const webmBlob = new Blob(microphoneAudioChunksRef.current, { type: 'audio/webm' });
+          console.log(`🎤 Combined WebM blob size: ${webmBlob.size} bytes`);
+          
+          // Save WebM file temporarily, then convert to WAV using FFmpeg
+          const tempWebmPath = outputPath.replace('.mp4', '_microphone_temp.webm');
+          const micWavPath = outputPath.replace('.mp4', '_microphone.wav');
+          
+          // Convert Blob to array buffer for IPC
+          const arrayBuffer = await webmBlob.arrayBuffer();
+          const buffer = Array.from(new Uint8Array(arrayBuffer));
+          
+          // Save temporary WebM file
+          const tempSaveResult = await ipcRenderer.invoke('save-audio-blob', {
+            outputPath: tempWebmPath,
+            audioData: buffer
+          });
+          
+          if (tempSaveResult.success) {
+            console.log(`✅ Saved temporary WebM: ${tempWebmPath}`);
+            
+            // Convert WebM to WAV using FFmpeg via IPC
+            const convertResult = await ipcRenderer.invoke('convert-audio-to-wav', {
+              inputPath: tempWebmPath,
+              outputPath: micWavPath
+            });
+            
+            if (convertResult.success) {
+              audioFiles.push(micWavPath);
+              console.log(`✅ MediaRecorder microphone converted: ${webmBlob.size} bytes WebM -> WAV`);
+            } else {
+              console.error('❌ Failed to convert WebM to WAV:', convertResult.error);
+            }
+          } else {
+            console.error('❌ Failed to save temporary WebM file');
+          }
+        } else if (audioSources.microphone) {
+          // Fallback: try native microphone recording (unlikely to work but worth trying)
           const micAudioPath = outputPath.replace('.mp4', '_microphone.wav');
           const micAudioResult = await ipcRenderer.invoke('save-audio-data', {
             outputPath: micAudioPath,
@@ -319,11 +467,12 @@ function SimultaneousRecorder({ onRecordingComplete }) {
           });
           if (micAudioResult.success) {
             audioFiles.push(micAudioPath);
-            console.log('Microphone audio saved successfully');
+            console.log('Native microphone audio saved:', micAudioPath);
           }
         }
         
-        // Convert frames to video using FFmpeg
+        // Convert frames to video using FFmpeg (video WITHOUT audio)
+        // Audio files will be kept separate and imported into timeline separately
         const result = await ipcRenderer.invoke('convert-frames-to-video', {
           outputPath: outputPath,
           frameRate: 30,
@@ -331,10 +480,17 @@ function SimultaneousRecorder({ onRecordingComplete }) {
         });
         
         if (result.success) {
-          alert(`Simultaneous recording saved successfully to: ${outputPath}`);
+          // Return video path and separate audio file paths for timeline import
+          const recordingData = {
+            videoPath: outputPath,
+            audioFiles: result.audioFiles || audioFiles // Return audio file paths
+          };
+          
+          alert(`Simultaneous recording saved successfully!\nVideo: ${outputPath}\nAudio tracks will be imported separately into timeline.`);
           
           if (onRecordingComplete) {
-            onRecordingComplete(outputPath);
+            // Pass both video and audio file paths
+            onRecordingComplete(recordingData);
           }
         } else {
           alert('Failed to convert frames to video');

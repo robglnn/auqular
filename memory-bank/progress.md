@@ -34,11 +34,11 @@
 
 ## What's Left to Build 🔨
 
-### Import & Media Management ✅ COMPLETE
+### Import & Media Management ⚠️ MOSTLY COMPLETE (Drag/Drop Needs Fix)
 - ✅ Connect "Import Video" button to IPC handler
 - ✅ Display imported clips in timeline
 - ✅ Generate and display thumbnails
-- ⏳ Handle file drag/drop events (optional)
+- 🚨 **ISSUE**: File drag/drop not working - red X cursor, drop events not captured
 - ✅ Store clips in app state
 
 ### Timeline Functionality ✅ COMPLETE (Enhanced Multi-Lane + Sequential Playback)
@@ -59,21 +59,29 @@
 - ✅ Seamless transitions through gaps
 - ✅ End-of-timeline detection
 
-### Preview & Playback ✅ COMPLETE
+### Preview & Playback ⚠️ MOSTLY COMPLETE (Video Rendering Issue)
 - ✅ Play/pause button functionality
 - ✅ Sync video playback with timeline playhead
 - ✅ Seek video when clicking timeline
 - ✅ Update playhead position during playback
 - ✅ Handle video end event
 - ✅ Click video to seek
+- ✅ Loop playback - auto-restart from beginning when reaching end
+- ✅ Multi-track simultaneous audio playback
+- 🚨 **CRITICAL ISSUE**: Video shows black screen during playback (shows correctly on pause)
+- 🚨 **ISSUE**: Black screen when no audio clip but video clip should display
 
-### Export Functionality ✅ COMPLETE
+### Export Functionality ⚠️ MOSTLY COMPLETE (Timeline Positioning Needs Fix)
 - ✅ Connect "Export" button to IPC
 - ✅ Show save dialog
-- ✅ Call exportVideo with correct parameters
+- ✅ Call export-multi-lane with correct parameters
 - ✅ Export progress events (logged to console)
-- ⏳ Handle export completion/error (basic alerts)
+- ✅ Handle export completion/error (basic alerts)
 - ✅ Show success message
+- ✅ Merges visible video and audio lanes into single MP4
+- ✅ Mixes multiple audio tracks together
+- ⚠️ **ISSUE**: Export timeline positioning - audio clips starting before video get forced to video start
+- ⚠️ **ISSUE**: Export duration doesn't extend to longest clip, black frame padding not working correctly
 
 ### Advanced Features (Stretch)
 - ✅ **Webcam Recording** (COMPLETE - Canvas + FFmpeg approach)
@@ -118,9 +126,12 @@
   - ✅ Independent preview - shows clip at playhead position
   - ✅ Multi-lane support with visibility toggles
   - ✅ Performance optimized with proper cleanup
-- ⏳ Split clip at playhead
-- ⏳ Delete clip from timeline
-- ⏳ Zoom timeline
+- ✅ Split clip at playhead (S key)
+- ✅ Delete clip from timeline (Delete/Backspace key)
+- ✅ Zoom timeline (Ctrl+Mouse Wheel)
+- ✅ Drag-and-drop file import (needs fix - drag/drop handler not working)
+- ⚠️ Horizontal scrollbar (functional but buggy)
+- ⚠️ Shift+Mouse Wheel horizontal scroll (functional but inconsistent)
 
 ## Current Status
 **Phase**: ✅ MVP Complete + All Recording Features + Multi-Lane Timeline + Sequential Playback Complete!  
@@ -132,12 +143,35 @@
 **Screen Recording**: ✅ Working (desktopCapturer + Canvas + FFmpeg)  
 **Simultaneous Recording**: ✅ Working (Loom-style PiP + Audio)  
 **Multi-Lane Timeline**: ✅ Working (Final Cut Pro-style with thumbnails)  
-**Sequential Playback**: ✅ Working (seamless clip transitions)  
-**Testing**: ✅ All features tested and functional  
-**Packaging**: ✅ Windows EXE built
-**Next Focus**: 🎯 Additional timeline features (split, delete, zoom)
+**Sequential Playback**: ✅ Working (seamless clip transitions + looping)  
+**Multi-Track Audio**: ✅ Working (simultaneous overlapping audio playback)  
+**Testing**: ⚠️ Core features functional but critical video rendering issue blocks workflow  
+**Packaging**: ✅ Windows EXE built (with FFmpeg binaries properly packaged)  
+**Next Focus**: 🚨 **CRITICAL**: Fix video preview rendering during playback
 
 ## Known Issues 🐛
+
+### Critical - Blocking Core Workflow 🚨
+
+🚨 **Video Preview Black Screen During Playback**
+- **Status**: ACTIVE - Blocking core editing workflow
+- **Description**: Video element displays black screen during active playback but shows correctly when paused
+- **Impact**: Cannot see video content while editing, severely limits usability
+- **Technical Details**:
+  - Video element loads successfully (logs confirm playback started)
+  - CSS styles set: `display: 'block'`, `visibility: 'visible'`, `opacity: '1'`
+  - May be related to video element state, CSS layering, or rendering pipeline
+- **Next Steps**: Investigate video element rendering, CSS z-index/layering, Electron video playback quirks
+
+🚨 **Drag and Drop File Import Failure**
+- **Status**: ACTIVE - Blocks convenient file import workflow
+- **Description**: Files dragged from Windows Explorer show red X cursor and drop fails
+- **Impact**: Users must use file picker button instead of convenient drag/drop
+- **Technical Details**:
+  - Event handlers attached to window, document, body with `{ passive: false, capture: true }`
+  - Comprehensive logging added but drop events not being captured
+  - May require Electron main process handler or different event capture strategy
+- **Next Steps**: Research Electron drag/drop best practices, consider IPC-based file handling
 
 ### Critical
 ✅ **MediaRecorder API Incompatibility - SOLVED!**
@@ -165,11 +199,47 @@
 - **Status**: Screen recording now works perfectly!
 
 ### Non-Critical
-- Bundle size warning (acceptable for desktop app - 429KB)
+✅ **FFmpeg Packaging Issue - SOLVED!**
+- **Issue**: Windows EXE missing FFmpeg binaries causing "spawn ffprobe.exe ENOENT" error
+- **Symptoms**: Video import failed with "Cannot find ffprobe" error
+- **✅ Solution**: Updated electron-builder config to use `extraResources` instead of `files`, enhanced main.js with `app.isPackaged` detection
+- **Status**: EXE now includes proper FFmpeg binaries and works correctly
+
+### Medium Priority
+
+⚠️ **Export Timeline Positioning Not Accurate**
+- **Status**: ACTIVE - Exported video doesn't match timeline arrangement
+- **Description**: Audio clips starting before video get forced to video start in export
+- **Impact**: Exported videos don't match what user sees in timeline
+- **Details**: Export uses timelineStart/timelineEnd but FFmpeg filter chain may not be correctly applying positioning
+- **Next Steps**: Review FFmpeg filter chain for tpad padding, verify timeline offset calculations
+
+⚠️ **Video Black Screen When No Audio Clip**
+- **Status**: ACTIVE - Preview shows black instead of video when playhead over video but no audio clip
+- **Description**: When only video clip is at playhead position (no overlapping audio), preview shows black screen
+- **Impact**: Cannot preview video-only sections properly
+- **Details**: May be related to clip selection logic or Preview component rendering conditions
+- **Next Steps**: Review clip selection logic and Preview component conditional rendering
+
+### Low Priority
+
+⚠️ **Horizontal Scrollbar Buggy**
+- **Status**: ACTIVE - Functional but has positioning/threshold bugs
+- **Impact**: Minor UX issue, users can still navigate but experience is inconsistent
+- **Details**: Scrollbar thumb positioning and drag calculation may need refinement
+
+⚠️ **Shift+Mouse Wheel Horizontal Scroll Inconsistent**
+- **Status**: ACTIVE - Sometimes doesn't scroll horizontally when Shift+Wheel
+- **Impact**: Minor UX issue, scrollbar provides alternative navigation
+- **Details**: Event detection or delta calculation may need adjustment
+
+### Non-Critical
 - DevTools console errors (harmless cache and autofill warnings)
 - GPU cache errors in Electron (harmless, common on Windows)
 - No export progress UI yet (progress logged to console)
-- No drag/drop for files (only file picker works)
+
+#### Non-Critical
+- System audio recording tabled (configuration issues; microphone works)
 
 ## Testing Status
 - ❌ Unit tests - Not implemented (optional)

@@ -15,8 +15,9 @@
 - **fluent-ffmpeg** v2.1.3 - FFmpeg wrapper for Node.js
 - **ffmpeg-static** v5.2.0, **ffprobe-static** v3.1.0 - Bundled FFmpeg/FFprobe binaries
 - **mic** v2.1.2 - Microphone audio recording
-- **node-record-lpcm16** v1.0.1 - System audio recording
+- **node-record-lpcm16** v1.0.1 - System audio recording fallback
 - **sox-audio** v0.3.0 - Enhanced audio processing (optional)
+- **SoX** (bundled binary) - System audio capture (tabled)
 - **Node.js** - File system operations, IPC, canvas frame capture
 
 ### Build Tools
@@ -83,20 +84,73 @@ Renderer → Main (via ipcRenderer.invoke):
 - @babel/core, @babel/preset-env, @babel/preset-react
 - electron-builder@26.0.12
 
+## Recent Technical Implementations
+
+### Multi-Track Audio Playback System
+**Architecture**: Dynamic creation of hidden HTML5 audio elements for simultaneous playback
+- Each overlapping audio/video clip gets its own audio element
+- Audio elements stored in `audioElementsRef.current` Map keyed by clip ID
+- Video clips automatically extract audio and create separate audio element
+- Elements cleaned up when clips no longer overlap at playhead position
+**Technical Approach**:
+- Uses `document.createElement('audio')` for each track
+- Elements are `display: 'none'` and appended to document.body
+- Synchronized to playhead position and play/pause state
+- Respects trim boundaries (`trimStart`/`trimEnd`) for each clip
+
+### Loop Playback Implementation
+- Auto-reset to position 0 when playhead exceeds max clip end
+- Preserves play state during reset (continues playing)
+- Finds clip at start position for seamless loop transition
+
+### Export Timeline Syncing Challenges
+- Export attempts to use `timelineStart`/`timelineEnd` for accurate positioning
+- FFmpeg filter chain complexity for black frame padding:
+  - `tpad` filter for padding before video (`start_mode=clone`)
+  - `tpad` filter for padding after video (`stop_mode=clone`)
+- Filter output mapping must correctly chain: `[0:v]` → `[v_start]` → `[v_final]`
+- Current issues suggest filter chain may not be correctly applied or mapped
+
 ## Known Technical Issues & Solutions
 
 ### FFmpeg Path Setup ✅ RESOLVED
 **Issue**: `Cannot find ffprobe` error when using fluent-ffmpeg  
-**Solution**: Configure both ffmpeg and ffprobe paths in main.js:
+**Solution**: Configure both ffmpeg and ffprobe paths in main.js with environment detection:
 ```javascript
-const ffmpegStatic = require('ffmpeg-static');
-const ffprobeStatic = require('ffprobe-static');
-if (ffmpegStatic) {
-  ffmpeg.setFfmpegPath(ffmpegStatic);
+// Set FFmpeg paths
+if (app.isPackaged) {
+  // In packaged app, binaries are in resources folder
+  const ffmpegPath = path.join(process.resourcesPath, 'ffmpeg.exe');
+  const ffprobePath = path.join(process.resourcesPath, 'ffprobe.exe');
+  ffmpeg.setFfmpegPath(ffmpegPath);
+  ffmpeg.setFfprobePath(ffprobePath);
+} else {
+  // In development, use the static packages
+  const ffmpegStatic = require('ffmpeg-static');
+  const ffprobeStatic = require('ffprobe-static');
+  if (ffmpegStatic) {
+    ffmpeg.setFfmpegPath(ffmpegStatic);
+  }
+  if (ffprobeStatic) {
+    ffmpeg.setFfprobePath(ffprobeStatic.path);
+  }
 }
-if (ffprobeStatic) {
-  ffmpeg.setFfprobePath(ffprobeStatic.path);
-}
+```
+
+### Electron Builder Configuration ✅ RESOLVED
+**Issue**: FFmpeg binaries not included in packaged EXE  
+**Solution**: Updated package.json build configuration to use `extraResources`:
+```json
+"extraResources": [
+  {
+    "from": "node_modules/ffmpeg-static/ffmpeg.exe",
+    "to": "ffmpeg.exe"
+  },
+  {
+    "from": "node_modules/ffprobe-static/bin/win32/x64/ffprobe.exe",
+    "to": "ffprobe.exe"
+  }
+]
 ```
 
 ### React Import Errors (RESOLVED)
@@ -109,4 +163,36 @@ if (ffprobeStatic) {
 ### Event Parameter Bug (RESOLVED)
 **Issue**: Undefined `event` in Preview.jsx  
 **Solution**: Changed `handleVideoClick = () =>` to `handleVideoClick = (event) =>`
+
+### SoX Bundling ✅ IMPLEMENTED
+- Bundled SoX exe and DLLs in bin/sox/ folder
+- extraResources copies to resources/sox/
+- main.js spawns with path detection
+
+### Drag and Drop Event Handling ⚠️ RESEARCH NEEDED
+**Issue**: Drop events not being captured despite comprehensive event handlers
+**Current Implementation**:
+- Event listeners on window, document, body with `{ passive: false, capture: true }`
+- `preventDefault()`, `stopPropagation()`, `stopImmediatePropagation()` in all handlers
+- Comprehensive logging for debugging
+- `dataTransfer.dropEffect = 'copy'` and `effectAllowed = 'copy'` set
+**Hypotheses**:
+- May need Electron main process drag/drop handler
+- May require different event capture approach
+- Could be Electron security settings blocking file drops
+**Research Direction**: Investigate Electron-specific drag/drop APIs, IPC-based file handling alternatives
+
+### Video Element Rendering ⚠️ INVESTIGATION NEEDED
+**Issue**: Video element shows black screen during playback but correct frame on pause
+**Current Implementation**:
+- HTML5 `<video>` element with `preload="auto"`, `playsInline`, explicit display styles
+- `video.style.display = 'block'`, `visibility: 'visible'`, `opacity: '1'` set during play
+- Video loads successfully (console logs confirm)
+- Video audio plays correctly (extracted and mixed)
+**Hypotheses**:
+- CSS z-index/layering issue hiding video behind other elements
+- Video element state management issue (src changes interfering with playback)
+- Electron Chromium video playback quirk
+- React re-render causing video element to reset
+**Investigation Steps**: Check CSS hierarchy, video element lifecycle, React component re-render patterns
 

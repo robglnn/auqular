@@ -70,3 +70,5 @@ coverage/
 thumbnails/
 *.thumb.*
 
+# SoX Binary
+!sox.exe

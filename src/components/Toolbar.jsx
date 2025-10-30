@@ -1,10 +1,13 @@
 import React from 'react';
 
-function Toolbar({ onImport, onExport, canExport, onRecord }) {
+function Toolbar({ onImport, onExport, canExport, onRecord, onImportAudio }) {
   return (
     <div className="toolbar">
       <button className="btn btn-primary" onClick={onImport}>
         Import Video
+      </button>
+      <button onClick={onImportAudio} className="toolbar-button">
+        Import Audio
       </button>
       <button className="btn btn-primary" onClick={onRecord}>
         Record
