@@ -380,172 +380,211 @@ ipcMain.handle('export-multi-lane', async (event, { outputPath, videoClips, audi
         command = command.duration(videoDuration);
       }
 
-      // Build filters array
-      const filters = [];
-      let videoOutput = '[0:v]';
-      let videoMap = '0:v';
-      
-      // If multiple videos, overlay them (e.g., PiP for webcam)
-      if (videoClips.length > 1) {
-        command = command.input(videoClips[1].inputPath);
-        // Apply trim to second video if needed
-        if (videoClips[1].startTime || videoClips[1].endTime) {
-          // Note: seekInput applies to last input, so we need to use inputOptions
-          command = command.inputOptions([
-            `-ss ${videoClips[1].startTime || 0}`
-          ]);
-          if (videoClips[1].endTime) {
-            const dur = videoClips[1].endTime - (videoClips[1].startTime || 0);
-            command = command.inputOptions([`-t ${dur}`]);
-          }
-        }
-        
-        // Overlay second video bottom-right (PiP)
-        filters.push(`[0:v][1:v]overlay=main_w-overlay_w-20:main_h-overlay_h-20[v]`);
-        videoOutput = '[v]';
-        videoMap = '[v]';
-      }
+      // Helper to probe if file has audio stream
+      const hasAudio = async (filePath) => {
+        return new Promise((resolve) => {
+          ffmpeg.ffprobe(filePath, (err, metadata) => {
+            if (err) {
+              console.warn(`Probe error for ${filePath}:`, err);
+              resolve(false);
+            } else {
+              const hasAudioStream = metadata.streams.some(stream => stream.codec_type === 'audio');
+              resolve(hasAudioStream);
+            }
+          });
+        });
+      };
 
-      // Add audio inputs with trimming
-      const audioInputs = [];
-      let audioInputIndex = videoClips.length > 1 ? 2 : 1; // Start after video inputs
-      
-      // Check if primary video has audio (always include [0:a] if video might have audio)
-      // We'll try to map it, FFmpeg will handle if it doesn't exist
-      const hasVideoAudio = true; // Assume video might have audio
-      
-      // Add audio clip inputs with trimming via inputOptions
-      audioClips.forEach((audio, index) => {
-        command = command.input(audio.inputPath);
-        
-        // Apply trim via inputOptions (more reliable than complex filters for simple trimming)
-        if (audio.startTime || audio.endTime) {
-          const startTime = audio.startTime || 0;
-          const duration = audio.endTime ? (audio.endTime - startTime) : undefined;
-          const inputOptions = [];
-          if (startTime > 0) {
-            inputOptions.push(`-ss ${startTime}`);
-          }
-          if (duration) {
-            inputOptions.push(`-t ${duration}`);
-          }
-          if (inputOptions.length > 0) {
-            // Apply to the last input (the audio we just added)
-            command = command.inputOptions(inputOptions);
-          }
-        }
-        
-        // Track this audio stream for mixing
-        audioInputs.push(`[${audioInputIndex}:a]`);
-        audioInputIndex++;
-      });
+      (async () => {  // Wrap in async IIFE
+        // Probing logic here
+        const videoAudioStatus = await Promise.all(videoClips.map(async (clip) => ({
+          ...clip,
+          hasAudio: await hasAudio(clip.inputPath)
+        })));
 
-      // Build audio mix filter
-      if (hasVideoAudio) {
-        audioInputs.unshift('[0:a]'); // Add video audio first
-      }
-      
-      if (audioInputs.length > 0) {
-        if (audioInputs.length > 1) {
-          // Multiple audio inputs - mix them
-          filters.push(`${audioInputs.join('')}amix=inputs=${audioInputs.length}:duration=longest[a]`);
-        } else {
-          // Single audio - just pass through
-          filters.push(`${audioInputs[0]}acopy[a]`);
-        }
-      }
+        const audioAudioStatus = await Promise.all(audioClips.map(async (clip) => ({
+          ...clip,
+          hasAudio: await hasAudio(clip.inputPath)
+        })));
 
-      // Apply all filters
-      if (filters.length > 0) {
-        command = command.complexFilter(filters.join(';'));
-        command = command.outputOptions('-map', videoMap);
-        if (audioInputs.length > 0) {
-          command = command.outputOptions('-map', '[a]');
-        }
-      } else {
-        // No filters - simple passthrough
-        command = command.outputOptions('-map', '0:v');
-        if (audioInputs.length > 0 && audioInputs[0] === '[0:a]') {
-          command = command.outputOptions('-map', '0:a');
-        }
-      }
+        // Rest of the export logic using videoAudioStatus and audioAudioStatus
+        // Only include audio from clips that have it
 
-      // Apply codecs and quality
-      command
-        .videoCodec('libx264')
-        .audioCodec('aac')
-        .outputOptions('-preset', 'fast')
-        .outputOptions('-crf', '23')
-        .outputOptions('-pix_fmt', 'yuv420p'); // Ensure compatibility
-
-      // Build video filter: add black padding before/after video if needed
-      if (videoOffset > 0 || maxDuration > (primaryVideoDuration + videoOffset)) {
-        // Need padding before and/or after video
-        let videoInput = '[0:v]';
+        // Build filters array
+        const filters = [];
         let videoOutput = '[0:v]';
+        let videoMap = '0:v';
         
-        // Add padding before video if video starts after timeline start
-        if (videoOffset > 0) {
-          videoOutput = '[v_start]';
-          filters.push(`${videoInput}tpad=start_mode=clone:start_duration=${videoOffset}${videoOutput}`);
-          videoInput = videoOutput;
-        }
-        
-        // Add padding after video if total duration exceeds video duration + offset
-        const paddingAfter = maxDuration - (primaryVideoDuration + videoOffset);
-        if (paddingAfter > 0) {
-          const prevOutput = videoInput;
-          videoOutput = '[v_final]';
-          filters.push(`${prevOutput}tpad=stop_mode=clone:stop_duration=${paddingAfter}${videoOutput}`);
-        } else {
-          videoOutput = videoInput;
-        }
-        
-        videoMap = videoOutput;
-      }
-      
-      if (scaleTo1080p) {
-        // Apply scale after padding if needed
-        if (videoMap.includes('[v]') && filters.some(f => f.includes('[v]'))) {
-          // Find the last video filter and modify it
-          const lastVideoFilterIndex = filters.length - 1;
-          const lastFilter = filters[lastVideoFilterIndex];
-          if (lastFilter.includes('[v]')) {
-            const inputLabel = lastFilter.match(/\[([^\]]+)\]/)[0];
-            const outputLabel = lastFilter.includes('[') && lastFilter.split('[').length > 2 
-              ? lastFilter.split('[').pop().replace(']', '')
-              : 'v_scaled';
-            filters[lastVideoFilterIndex] = lastFilter.replace('[v]', '[v_temp]');
-            filters.push(`[v_temp]scale=1920:1080[v]`);
-            videoMap = '[v]';
+        // If multiple videos, overlay them (e.g., PiP for webcam)
+        if (videoClips.length > 1) {
+          command = command.input(videoClips[1].inputPath);
+          // Apply trim to second video if needed
+          if (videoClips[1].startTime || videoClips[1].endTime) {
+            // Note: seekInput applies to last input, so we need to use inputOptions
+            command = command.inputOptions([
+              `-ss ${videoClips[1].startTime || 0}`
+            ]);
+            if (videoClips[1].endTime) {
+              const dur = videoClips[1].endTime - (videoClips[1].startTime || 0);
+              command = command.inputOptions([`-t ${dur}`]);
+            }
           }
-        } else {
-          filters.push(`[0:v]scale=1920:1080[v]`);
+          
+          // Overlay second video bottom-right (PiP)
+          filters.push(`[0:v][1:v]overlay=main_w-overlay_w-20:main_h-overlay_h-20[v]`);
+          videoOutput = '[v]';
           videoMap = '[v]';
         }
-      }
 
-      command
-        .save(outputPath)
-        .on('start', (commandLine) => {
-          console.log('FFmpeg command:', commandLine);
-          event.sender.send('export-progress', 0);
-        })
-        .on('progress', (progress) => {
-          console.log('Export progress:', progress.percent, '%');
-          event.sender.send('export-progress', progress.percent);
-        })
-        .on('end', () => {
-          console.log('Export complete:', outputPath);
-          resolve(outputPath);
-        })
-        .on('error', (err, stdout, stderr) => {
-          console.error('FFmpeg export error:', err);
-          console.error('FFmpeg stdout:', stdout);
-          console.error('FFmpeg stderr:', stderr);
-          reject(new Error(`FFmpeg error: ${err.message}\n${stderr || stdout || ''}`));
-        })
-        .run();
+        // Add audio inputs with trimming
+        const audioInputs = [];
+        let audioInputIndex = videoClips.length > 1 ? 2 : 1; // Start after video inputs
+        
+        // Check if primary video has audio (always include [0:a] if video might have audio)
+        // We'll try to map it, FFmpeg will handle if it doesn't exist
+        const hasVideoAudio = true; // Assume video might have audio
+        
+        // Add audio clip inputs with trimming via inputOptions
+        audioClips.forEach((audio, index) => {
+          if (audio.hasAudio) { // Add this check
+            command = command.input(audio.inputPath);
+            
+            // Apply trim via inputOptions (more reliable than complex filters for simple trimming)
+            if (audio.startTime || audio.endTime) {
+              const startTime = audio.startTime || 0;
+              const duration = audio.endTime ? (audio.endTime - startTime) : undefined;
+              const inputOptions = [];
+              if (startTime > 0) {
+                inputOptions.push(`-ss ${startTime}`);
+              }
+              if (duration) {
+                inputOptions.push(`-t ${duration}`);
+              }
+              if (inputOptions.length > 0) {
+                // Apply to the last input (the audio we just added)
+                command = command.inputOptions(inputOptions);
+              }
+            }
+            
+            const delay = Math.max(0, (audio.timelineStart - timelineStart) * 1000);
+            const delayedLabel = `[a_delayed${index}]`;
+            filters.push(`[${audioInputIndex}:a]adelay=${Math.round(delay)}|${Math.round(delay)}${delayedLabel}`);
+            audioInputs.push(delayedLabel);
+            audioInputIndex++;
+          }
+        });
+
+        // Handle video audio with delay if it exists
+        if (hasVideoAudio && videoAudioStatus[0].hasAudio) { // Check primary video
+          const videoAudioDelay = Math.max(0, (videoClips[0].timelineStart - timelineStart) * 1000);
+          const videoAudioLabel = '[a_video]';
+          filters.push(`[0:a]adelay=${Math.round(videoAudioDelay)}|${Math.round(videoAudioDelay)}${videoAudioLabel}`);
+          audioInputs.unshift(videoAudioLabel);
+        }
+        
+        if (audioInputs.length > 0) {
+          if (audioInputs.length > 1) {
+            // Multiple audio inputs - mix them
+            filters.push(`${audioInputs.join('')}amix=inputs=${audioInputs.length}:duration=longest[a]`);
+          } else {
+            // Single audio - just pass through
+            filters.push(`${audioInputs[0]}acopy[a]`);
+          }
+        }
+
+        // Apply all filters
+        if (filters.length > 0) {
+          command = command.complexFilter(filters.join(';'));
+          command = command.outputOptions('-map', videoMap);
+          if (audioInputs.length > 0) {
+            command = command.outputOptions('-map', '[a]');
+          }
+        } else {
+          // No filters - simple passthrough
+          command = command.outputOptions('-map', '0:v');
+          if (audioInputs.length > 0 && audioInputs[0] === '[0:a]') {
+            command = command.outputOptions('-map', '0:a');
+          }
+        }
+
+        // Apply codecs and quality
+        command
+          .videoCodec('libx264')
+          .audioCodec('aac')
+          .outputOptions('-preset', 'fast')
+          .outputOptions('-crf', '23')
+          .outputOptions('-pix_fmt', 'yuv420p'); // Ensure compatibility
+
+        // Build video filter: add black padding before/after video if needed
+        if (videoOffset > 0 || maxDuration > (primaryVideoDuration + videoOffset)) {
+          // Need padding before and/or after video
+          let videoInput = '[0:v]';
+          let videoOutput = '[0:v]';
+          
+          // Add padding before video if video starts after timeline start
+          if (videoOffset > 0) {
+            videoOutput = '[v_start]';
+            filters.push(`${videoInput}tpad=start_mode=clone:start_duration=${videoOffset}${videoOutput}`);
+            videoInput = videoOutput;
+          }
+          
+          // Add padding after video if total duration exceeds video duration + offset
+          const paddingAfter = maxDuration - (primaryVideoDuration + videoOffset);
+          if (paddingAfter > 0) {
+            const prevOutput = videoInput;
+            videoOutput = '[v_final]';
+            filters.push(`${prevOutput}tpad=stop_mode=clone:stop_duration=${paddingAfter}${videoOutput}`);
+          } else {
+            videoOutput = videoInput;
+          }
+          
+          videoMap = videoOutput;
+        }
+        
+        if (scaleTo1080p) {
+          // Apply scale after padding if needed
+          if (videoMap.includes('[v]') && filters.some(f => f.includes('[v]'))) {
+            // Find the last video filter and modify it
+            const lastVideoFilterIndex = filters.length - 1;
+            const lastFilter = filters[lastVideoFilterIndex];
+            if (lastFilter.includes('[v]')) {
+              const inputLabel = lastFilter.match(/\[([^\]]+)\]/)[0];
+              const outputLabel = lastFilter.includes('[') && lastFilter.split('[').length > 2 
+                ? lastFilter.split('[').pop().replace(']', '')
+                : 'v_scaled';
+              filters[lastVideoFilterIndex] = lastFilter.replace('[v]', '[v_temp]');
+              filters.push(`[v_temp]scale=1920:1080[v]`);
+              videoMap = '[v]';
+            }
+          } else {
+            filters.push(`[0:v]scale=1920:1080[v]`);
+            videoMap = '[v]';
+          }
+        }
+
+        command
+          .save(outputPath)
+          .on('start', (commandLine) => {
+            console.log('FFmpeg command:', commandLine);
+            event.sender.send('export-progress', 0);
+          })
+          .on('progress', (progress) => {
+            console.log('Export progress:', progress.percent, '%');
+            event.sender.send('export-progress', progress.percent);
+          })
+          .on('end', () => {
+            console.log('Export complete:', outputPath);
+            resolve(outputPath);
+          })
+          .on('error', (err, stdout, stderr) => {
+            console.error('FFmpeg export error:', err);
+            console.error('FFmpeg stdout:', stdout);
+            console.error('FFmpeg stderr:', stderr);
+            reject(new Error(`FFmpeg error: ${err.message}\n${stderr || stdout || ''}`));
+          })
+          .run();
+      })().catch(reject);  // Catch errors from IIFE
+
     } catch (error) {
       console.error('Export error:', error);
       reject(error);

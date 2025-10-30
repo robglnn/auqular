@@ -29,11 +29,12 @@
 - **Drag-and-drop import** - File import via drag from file explorer (needs fix)
 - **Horizontal scrollbar** - Draggable scrollbar at bottom of timeline (buggy, needs refinement)
 
-### Export Timeline Syncing ⚠️ PARTIAL
+### Export Timeline Syncing ✅ COMPLETE
 - **Timeline position tracking** - Export now tracks timelineStart/timelineEnd for all clips
-- **Black frame padding** - Attempts to add black frames before/after video when audio extends beyond
-- **Issue**: Export still syncs to video clip start, not respecting audio clips that start before video
-- **Issue**: Audio positioning in export doesn't match timeline positions correctly
+- **Black frame padding** - Adds black frames before/after video when audio extends beyond
+- **Audio positioning** - Uses adelay filters to position audio correctly relative to timeline start
+- **Fixed**: Audio now properly positioned even if starting before/after video
+- **Fixed**: Export duration now matches longest clip with proper padding
 
 ### SoX Bundling for System Audio ✅ COMPLETE (But Tabled for Now)
 - Bundled SoX Windows binary and DLLs in `bin/sox/` folder

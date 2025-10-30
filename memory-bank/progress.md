@@ -71,7 +71,7 @@
 - 🚨 **CRITICAL ISSUE**: Video shows black screen during playback (shows correctly on pause)
 - 🚨 **ISSUE**: Black screen when no audio clip but video clip should display
 
-### Export Functionality ⚠️ MOSTLY COMPLETE (Timeline Positioning Needs Fix)
+### Export Functionality ✅ COMPLETE
 - ✅ Connect "Export" button to IPC
 - ✅ Show save dialog
 - ✅ Call export-multi-lane with correct parameters
@@ -80,8 +80,8 @@
 - ✅ Show success message
 - ✅ Merges visible video and audio lanes into single MP4
 - ✅ Mixes multiple audio tracks together
-- ⚠️ **ISSUE**: Export timeline positioning - audio clips starting before video get forced to video start
-- ⚠️ **ISSUE**: Export duration doesn't extend to longest clip, black frame padding not working correctly
+- ✅ Respects timeline positions with adelay for audio
+- ✅ Adds black frame padding before/after video as needed
 
 ### Advanced Features (Stretch)
 - ✅ **Webcam Recording** (COMPLETE - Canvas + FFmpeg approach)
@@ -208,7 +208,7 @@
 ### Medium Priority
 
 ⚠️ **Export Timeline Positioning Not Accurate**
-- **Status**: ACTIVE - Exported video doesn't match timeline arrangement
+- **Status**: RESOLVED - Added adelay filters for audio positioning
 - **Description**: Audio clips starting before video get forced to video start in export
 - **Impact**: Exported videos don't match what user sees in timeline
 - **Details**: Export uses timelineStart/timelineEnd but FFmpeg filter chain may not be correctly applying positioning

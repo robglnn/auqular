@@ -258,23 +258,23 @@ function Preview({ clip, allClipsAtPosition = [], isPlaying, onPlay, onPause, pl
                   console.log('✅ Video playback started - currentTime:', element.currentTime, 'paused:', element.paused);
                 }
               }
-            } catch (err) {
-              if (err.name === 'AbortError') {
-                console.warn('Play interrupted, retrying...');
-                setTimeout(async () => {
-                  try {
+          } catch (err) {
+            if (err.name === 'AbortError') {
+              console.warn('Play interrupted, retrying...');
+              setTimeout(async () => {
+                try {
                     if (isAudioOnly) {
                       element.muted = false;
                       element.volume = 1.0;
                     }
-                    await element.play();
-                  } catch (retryErr) {
-                    console.error('Retry play failed:', retryErr);
-                  }
-                }, 100);
-              } else {
-                console.error('Play error:', err);
-              }
+                  await element.play();
+                } catch (retryErr) {
+                  console.error('Retry play failed:', retryErr);
+                }
+              }, 100);
+            } else {
+              console.error('Play error:', err);
+            }
             }
           } else {
             // Wait for audio to be ready
@@ -444,9 +444,9 @@ function Preview({ clip, allClipsAtPosition = [], isPlaying, onPlay, onPause, pl
     }
     
     // Calculate target time based on trim points (CRITICAL for split to work)
-    const offsetInClip = playheadPosition - clip.position + clip.trimStart;
-    const targetTime = Math.max(clip.trimStart, Math.min(offsetInClip, clip.trimEnd));
-    
+      const offsetInClip = playheadPosition - clip.position + clip.trimStart;
+      const targetTime = Math.max(clip.trimStart, Math.min(offsetInClip, clip.trimEnd));
+      
     // Only sync when paused to avoid interrupting playback
     if (!isPlaying && audio.readyState >= 2) {
       const tolerance = 0.1;
