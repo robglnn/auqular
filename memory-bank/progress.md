@@ -77,6 +77,11 @@
 - ✅ Call export-multi-lane with correct parameters
 - ✅ Export progress indicator (XX% in blue next to "Auqular")
 - ✅ Progress updates in real-time during export
+- ✅ Export resolution options (Source, 720p, 1080p)
+- ✅ Three dedicated export buttons with minimal spacing (2px)
+- ✅ Export MP4 exports at source resolution (no scaling)
+- ✅ 720p button exports at 1280x720 resolution
+- ✅ 1080p button exports at 1920x1080 resolution
 - ✅ Handle export completion/error (basic alerts)
 - ✅ Show success message
 - ✅ Merges visible video and audio lanes into single MP4

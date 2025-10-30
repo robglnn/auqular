@@ -47,7 +47,8 @@ Renderer → Main (via ipcRenderer.invoke):
 - `openVideoFile()` - Open file picker
 - `getVideoDuration(path)` - Get video metadata
 - `generateThumbnail(path)` - Create thumbnail
-- `exportVideo({inputPath, outputPath, startTime, endTime, scaleTo1080p})` - Export
+- `exportVideo({inputPath, outputPath, startTime, endTime, scaleResolution})` - Export (scaleResolution: null=source, 720, 1080)
+- `export-multi-lane({outputPath, videoClips, audioClips, scaleResolution})` - Multi-lane export with scaling
 - `showSaveDialog()` - Save dialog
 
 ## Technical Constraints
@@ -85,6 +86,23 @@ Renderer → Main (via ipcRenderer.invoke):
 - electron-builder@26.0.12
 
 ## Recent Technical Implementations
+
+### Export Resolution Scaling System
+**Architecture**: Simple video filter applied AFTER complex filter processing for resolution scaling
+- Export supports three resolution presets: Source (null), 720p (1280x720), 1080p (1920x1080)
+- `scaleResolution` parameter passed from renderer through IPC to main process
+- Scaling applied using `.videoFilters('scale=WIDTH:HEIGHT')` method on FFmpeg command
+- Critical implementation detail: Scaling must be applied as simple filter, NOT in complex filter array
+**Technical Approach**:
+- `handleExport(scaleResolution)` accepts null/720/1080 parameter
+- Three wrapper functions: `handleExportSource()`, `handleExport720p()`, `handleExport1080p()`
+- Main process converts to number: `const scaleNum = scaleResolution ? parseInt(scaleResolution, 10) : null`
+- Applied after complex filter setup but before `.save()`: `command = command.videoFilters('scale=1280:720')`
+- Implemented in both `export-multi-lane` and `export-video` IPC handlers
+**UI Implementation**:
+- Three buttons in Toolbar: "Export MP4" (source), "720p", "1080p"
+- Minimal spacing between buttons (2px) to visually group them as export settings
+- Each button passes appropriate resolution parameter to export handler
 
 ### Multi-Track Audio Playback System
 **Architecture**: Dynamic creation of hidden HTML5 audio elements for simultaneous playback

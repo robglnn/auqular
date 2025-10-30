@@ -5,6 +5,14 @@
 
 ## Recent Changes (Current Session)
 
+### Export Resolution Options ✅ COMPLETE!
+- **Three export quality presets** - Source resolution (no scaling), 720p (1280x720), and 1080p (1920x1080)
+- **UI implementation** - Small resolution buttons (720p, 1080p) positioned directly to the right of Export MP4 button with minimal spacing (2px)
+- **Export MP4 button** - Exports at source resolution (no scaling applied)
+- **Technical implementation** - Applied scaling as simple video filter AFTER complex filter processing using `.videoFilters()` method
+- **Critical fix** - Moved scaling from complex filter array (which wasn't being applied) to simple video filter for proper FFmpeg processing
+- **Both handlers updated** - Implemented scaling in both `export-multi-lane` and `export-video` IPC handlers
+
 ### Multi-Track Simultaneous Audio Playback Implementation ✅ COMPLETE!
 - **Simultaneous audio mixing** - Multiple overlapping audio/video clips now play audio simultaneously
 - **Audio extraction from video** - Video clips automatically extract audio and play alongside standalone audio tracks

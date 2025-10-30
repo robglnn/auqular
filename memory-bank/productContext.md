@@ -20,7 +20,7 @@ Auqular aims to provide a lightweight, stable video editor for Windows users who
    - Drag clips to reposition
    - Drag trim handles to set in/out points
    - Click play to preview
-5. User clicks "Export" to save trimmed video as MP4
+5. User clicks "Export MP4" (source resolution), "720p", or "1080p" to save trimmed video
 6. Export shows progress and completes without crashes
 
 ### Core User Stories
@@ -28,7 +28,7 @@ Auqular aims to provide a lightweight, stable video editor for Windows users who
 - "I can import MP4/MOV via drag/drop or picker, seeing thumbnails in timeline"
 - "I can preview imported clips smoothly"
 - "I can trim a clip by adjusting start/end, updating preview"
-- "I can export trimmed clip to MP4 (source/1080p), with progress and no crashes"
+- "I can export trimmed clip to MP4 (source/720p/1080p), with progress and no crashes"
 
 ## User Experience Goals
 - **Intuitive**: Clear toolbar buttons, visible timeline, responsive preview

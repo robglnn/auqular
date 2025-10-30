@@ -20,7 +20,7 @@ Core loop: Import → Display → Trim → Export
 - Simple timeline with draggable/resizable clips
 - HTML5 video preview player
 - Basic trim (set in/out points on single clip)
-- Export to MP4 with source resolution or 1080p option
+- Export to MP4 with source resolution, 720p, or 1080p options
 
 **Stretch Features** (if time permits):
 - Screen recording (desktopCapturer + getUserMedia)

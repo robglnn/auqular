@@ -86,10 +86,31 @@ App.jsx
 
 ## Known Architecture Patterns to Implement
 
-### 1. Progress Updates Pattern (Pending)
+### 1. Export Resolution Scaling Pattern ✅ IMPLEMENTED
+**Need**: Apply video scaling during export without breaking complex filter chain
+**Pattern**: Simple video filter applied AFTER complex filter processing
+**Implementation**:
+```javascript
+// Apply complex filters first (overlays, padding, audio mixing)
+if (filters.length > 0) {
+  command = command.complexFilter(filters.join(';'));
+}
+
+// THEN apply simple video filter for scaling (separate from complex filter)
+const scaleNum = scaleResolution ? parseInt(scaleResolution, 10) : null;
+if (scaleNum === 720) {
+  command = command.videoFilters('scale=1280:720');
+} else if (scaleNum === 1080) {
+  command = command.videoFilters('scale=1920:1080');
+}
+// null = source resolution (no scaling)
+```
+**Why This Works**: Complex filters and simple video filters are separate FFmpeg concepts. Mixing them causes the simple filter to be ignored. Apply complex filter via `.complexFilter()`, then apply simple video filter via `.videoFilters()`.
+
+### 2. Progress Updates Pattern ✅ IMPLEMENTED
 **Need**: Export progress from FFmpeg to UI  
 **Pattern**: IPC events from main process  
-**Implementation Needed**:
+**Implementation**:
 ```javascript
 // main.js
 .on('progress', (progress) => {
@@ -104,7 +125,7 @@ useEffect(() => {
 }, []);
 ```
 
-### 2. Clip State Management (In Progress)
+### 3. Clip State Management (In Progress)
 **Pattern**: Single source of truth for clip data  
 **State Structure**:
 ```javascript
