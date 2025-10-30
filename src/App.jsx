@@ -5,6 +5,7 @@ import MultiLaneTimeline from './components/MultiLaneTimeline.jsx';
 import WebcamRecorder from './components/WebcamRecorder.jsx';
 import SimultaneousRecorder from './components/SimultaneousRecorder.jsx';
 import ScreenRecorder from './components/ScreenRecorder.jsx';
+import MediaLibrary from './components/MediaLibrary.jsx';
 
 function App() {
   const [clips, setClips] = useState([]);
@@ -20,6 +21,7 @@ function App() {
   const [showRecordingPanel, setShowRecordingPanel] = useState(false);
   const [recordingType, setRecordingType] = useState('webcam'); // 'webcam', 'screen', or 'simultaneous'
   const [exportProgress, setExportProgress] = useState(null); // null or 0-100
+  const [showMediaLibrary, setShowMediaLibrary] = useState(false);
 
   const playbackStateRef = useRef({
     animationId: null,
@@ -466,11 +468,32 @@ function App() {
       const duration = await ipcRenderer.invoke('get-video-duration', filePath);
       const thumbnailPath = await ipcRenderer.invoke('generate-thumbnail', filePath);
       
+      // Get video resolution
+      let resolution = { width: null, height: null };
+      try {
+        resolution = await ipcRenderer.invoke('get-video-resolution', filePath);
+      } catch (e) {
+        console.warn('Could not get video resolution:', e);
+      }
+      
+      // Get file size
+      const fs = window.require('fs');
+      let fileSize = null;
+      try {
+        const stats = fs.statSync(filePath);
+        fileSize = stats.size;
+      } catch (e) {
+        console.warn('Could not get file size:', e);
+      }
+      
       const newClip = {
         id: Date.now(),
         filePath,
         duration,
         thumbnailPath,
+        width: resolution.width,
+        height: resolution.height,
+        fileSize,
         trimStart: 0,
         trimEnd: duration,
         position: playheadPosition,
@@ -490,6 +513,17 @@ function App() {
     try {
       const { ipcRenderer } = window.require('electron');
       const duration = await ipcRenderer.invoke('get-audio-duration', filePath);
+      
+      // Get file size
+      const fs = window.require('fs');
+      let fileSize = null;
+      try {
+        const stats = fs.statSync(filePath);
+        fileSize = stats.size;
+      } catch (e) {
+        console.warn('Could not get file size:', e);
+      }
+      
       const audioLanes = lanes.filter(l => l.type === 'audio');
       const targetLane = audioLanes[audioLanes.length - 1] || { id: 'audio1' };
       const fileName = filePath.split(/[\\/]/).pop() || filePath;
@@ -499,6 +533,7 @@ function App() {
         filePath,
         duration,
         thumbnailPath: null,
+        fileSize,
         trimStart: 0,
         trimEnd: duration,
         position: playheadPosition,
@@ -526,11 +561,32 @@ function App() {
         const duration = await ipcRenderer.invoke('get-video-duration', videoPath);
         const thumbnailPath = await ipcRenderer.invoke('generate-thumbnail', videoPath);
         
+        // Get video resolution
+        let resolution = { width: null, height: null };
+        try {
+          resolution = await ipcRenderer.invoke('get-video-resolution', videoPath);
+        } catch (e) {
+          console.warn('Could not get video resolution:', e);
+        }
+        
+        // Get file size
+        const fs = window.require('fs');
+        let fileSize = null;
+        try {
+          const stats = fs.statSync(videoPath);
+          fileSize = stats.size;
+        } catch (e) {
+          console.warn('Could not get file size:', e);
+        }
+        
         newClips.push({
           id: Date.now(),
           filePath: videoPath,
           duration,
           thumbnailPath,
+          width: resolution.width,
+          height: resolution.height,
+          fileSize,
           trimStart: 0,
           trimEnd: duration,
           position: 0,
@@ -587,6 +643,7 @@ function App() {
         canExport={clips.length > 0}
         exportProgress={exportProgress}
         onDropZoneClick={handleDropZoneClick}
+        onMediaLibrary={() => setShowMediaLibrary(true)}
         onRecord={() => {
           // CRITICAL: Stop playback before showing recording panel (releases camera/mic on Windows)
           if (isPlaying) {
@@ -666,6 +723,17 @@ function App() {
           onToggleVisibility={handleLaneVisibilityToggle}
           onSplitClip={handleSplitClip}
           onDeleteClip={handleDeleteClip}
+        />
+      )}
+      {showMediaLibrary && (
+        <MediaLibrary
+          clips={clips}
+          onSelectClip={(clip) => {
+            setCurrentClip(clip);
+            setPlayheadPosition(clip.position || 0);
+            setShowMediaLibrary(false);
+          }}
+          onClose={() => setShowMediaLibrary(false)}
         />
       )}
     </div>

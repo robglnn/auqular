@@ -1,6 +1,6 @@
 import React from 'react';
 
-function Toolbar({ onImport, onExportSource, onExport720p, onExport1080p, canExport, onRecord, onImportAudio, exportProgress, onDropZoneClick }) {
+function Toolbar({ onImport, onExportSource, onExport720p, onExport1080p, canExport, onRecord, onImportAudio, exportProgress, onDropZoneClick, onMediaLibrary }) {
   const [isDragging, setIsDragging] = React.useState(false);
   
   // Format progress as XX% (double digits, 0-100)
@@ -59,9 +59,17 @@ function Toolbar({ onImport, onExportSource, onExport720p, onExport1080p, canExp
         className="btn btn-primary"
         onClick={onExport1080p}
         disabled={!canExport}
-        style={{ marginRight: '4px' }}
+        style={{ marginRight: '2px' }}
       >
         1080p
+      </button>
+      <button
+        className="btn btn-primary"
+        onClick={onMediaLibrary}
+        style={{ marginRight: '2px' }}
+        title="Media Library"
+      >
+        📚 Library
       </button>
       <div style={{ flex: 1 }} />
       <div style={{ fontSize: '14px', color: '#888', display: 'flex', alignItems: 'center', gap: '8px' }}>

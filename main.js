@@ -317,6 +317,68 @@ app.whenReady().then(() => {
   });
 });
 
+// Force cleanup of all audio processes (called before recording starts)
+ipcMain.handle('force-stop-all-audio', async () => {
+  try {
+    console.log('🔧 Force stopping all audio processes...');
+    
+    if (systemAudioRecorder) {
+      console.log('Force killing system audio recorder...');
+      try {
+        if (systemAudioRecorder.kill) {
+          systemAudioRecorder.kill('SIGKILL'); // Force kill
+        } else if (typeof systemAudioRecorder.stop === 'function') {
+          systemAudioRecorder.stop();
+        }
+      } catch (e) {
+        console.warn('Error force-killing system recorder:', e);
+      }
+      systemAudioRecorder = null;
+    }
+    
+    if (microphoneRecorder) {
+      console.log('Force stopping microphone recorder...');
+      try {
+        microphoneRecorder.stop();
+      } catch (e) {
+        console.warn('Error force-stopping microphone:', e);
+      }
+      microphoneRecorder = null;
+    }
+    
+    // Clear audio data
+    audioData.systemAudio = [];
+    audioData.microphone = [];
+    
+    console.log('✅ All audio processes force-stopped');
+    return { success: true };
+  } catch (error) {
+    console.error('Error force-stopping audio:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Cleanup on app quit
+app.on('before-quit', () => {
+  console.log('🧹 App quitting - cleaning up audio processes...');
+  if (systemAudioRecorder) {
+    try {
+      if (systemAudioRecorder.kill) {
+        systemAudioRecorder.kill('SIGTERM');
+      } else if (typeof systemAudioRecorder.stop === 'function') {
+        systemAudioRecorder.stop();
+      }
+    } catch (e) {}
+    systemAudioRecorder = null;
+  }
+  if (microphoneRecorder) {
+    try {
+      microphoneRecorder.stop();
+    } catch (e) {}
+    microphoneRecorder = null;
+  }
+});
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
@@ -359,6 +421,26 @@ ipcMain.handle('get-video-duration', async (event, filePath) => {
         reject(err);
       } else {
         resolve(metadata.format.duration);
+      }
+    });
+  });
+});
+
+ipcMain.handle('get-video-resolution', async (event, filePath) => {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(filePath, (err, metadata) => {
+      if (err) {
+        reject(err);
+      } else {
+        const videoStream = metadata.streams.find(s => s.codec_type === 'video');
+        if (videoStream) {
+          resolve({
+            width: videoStream.width,
+            height: videoStream.height
+          });
+        } else {
+          reject(new Error('No video stream found'));
+        }
       }
     });
   });

@@ -187,9 +187,57 @@ function MultiLaneTimeline({ clips, setClips, currentClip, setCurrentClip, playh
   const scrollbarThumbWidth = Math.max(20, (stageWidth / maxClipEnd) * stageWidth);
   const scrollbarThumbX = (scrollX / maxScrollX) * (scrollbarWidth - scrollbarThumbWidth);
 
+  // Format time as MM:SS:CS (minutes:seconds:centiseconds)
+  const formatTime = (seconds) => {
+    if (!seconds || isNaN(seconds)) return '00:00:00';
+    const totalSeconds = Math.max(0, seconds);
+    const minutes = Math.floor(totalSeconds / 60);
+    const secs = Math.floor(totalSeconds % 60);
+    const centiseconds = Math.floor((totalSeconds % 1) * 100);
+    
+    return `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}:${centiseconds.toString().padStart(2, '0')}`;
+  };
+
+  // Calculate end of last clip
+  const getLastClipEnd = () => {
+    if (clips.length === 0) return 0;
+    const clipEnds = clips.map(clip => clip.position + (clip.trimEnd - clip.trimStart));
+    return Math.max(...clipEnds);
+  };
+
+  const handleSkipBack = () => {
+    if (setPlayheadPosition) {
+      setPlayheadPosition(0);
+    }
+  };
+
+  const handleSkipAhead = () => {
+    if (setPlayheadPosition) {
+      const endTime = getLastClipEnd();
+      setPlayheadPosition(endTime);
+    }
+  };
+
   return (
     <div className="multi-lane-timeline-container" ref={containerRef}>
       <div className="timeline-controls">
+        <button 
+          onClick={handleSkipBack} 
+          className="skip-btn skip-back-btn" 
+          title="Skip to beginning (00:00:00)"
+        >
+          ⏮
+        </button>
+        <div className="time-indicator">
+          {formatTime(playheadPosition)}
+        </div>
+        <button 
+          onClick={handleSkipAhead} 
+          className="skip-btn skip-ahead-btn" 
+          title={`Skip to end (${formatTime(getLastClipEnd())})`}
+        >
+          ⏭
+        </button>
         <button onClick={() => setLanes([...lanes, { id: `lane_${Date.now()}`, name: `Lane ${lanes.length + 1}`, type: 'video', clips: [], visible: true }])} className="add-lane-btn">
           + Add Lane
         </button>

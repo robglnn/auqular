@@ -100,6 +100,41 @@ function SimultaneousRecorder({ onRecordingComplete }) {
   const nuclearReset = async () => {
     console.log("☢️ NUCLEAR MEDIA STACK RESET INITIATED");
 
+    // 0. REMOVE ALL EVENT LISTENERS that might interfere with media streams
+    console.log("🧹 Removing potentially interfering event listeners...");
+    
+    // Clone and remove all drag/drop listeners (they use capture phase and might interfere)
+    const dragOverListeners = [];
+    const dropListeners = [];
+    
+    // Get all event listeners (if we can detect them)
+    // Create new handlers that just remove themselves
+    const cleanupDragOver = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+    };
+    
+    const cleanupDrop = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+    };
+    
+    // Remove existing listeners by adding and immediately removing
+    document.addEventListener('dragover', cleanupDragOver, { capture: true, once: true });
+    document.addEventListener('drop', cleanupDrop, { capture: true, once: true });
+    window.addEventListener('dragover', cleanupDragOver, { capture: true, once: true });
+    window.addEventListener('drop', cleanupDrop, { capture: true, once: true });
+    
+    // Immediately remove them to clear any lingering handlers
+    setTimeout(() => {
+      document.removeEventListener('dragover', cleanupDragOver, { capture: true });
+      document.removeEventListener('drop', cleanupDrop, { capture: true });
+      window.removeEventListener('dragover', cleanupDragOver, { capture: true });
+      window.removeEventListener('drop', cleanupDrop, { capture: true });
+    }, 100);
+
     // 1. Kill EVERYTHING in DOM
     document.querySelectorAll('video, audio').forEach(el => {
       if (el.srcObject) {
@@ -173,6 +208,7 @@ function SimultaneousRecorder({ onRecordingComplete }) {
     }
 
     try {
+      // Try getUserMedia with desktop source (Electron-specific)
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           mandatory: {
@@ -185,14 +221,78 @@ function SimultaneousRecorder({ onRecordingComplete }) {
       console.log("Screen stream acquired with source ID:", screenSourceId);
       return stream;
     } catch (err) {
-      console.error("Failed to acquire screen stream:", err);
-      throw err;
+      console.error("Failed to acquire screen stream via getUserMedia:", err);
+      console.log("Attempting fallback: Waiting longer and retrying...");
+      
+      // If getUserMedia fails, wait longer and try again
+      await new Promise(r => setTimeout(r, 2000));
+      
+      try {
+        // Retry with fresh source ID
+        const freshSourceId = await resetDesktopCapturer();
+        const retryStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            mandatory: {
+              chromeMediaSource: 'desktop',
+              chromeMediaSourceId: freshSourceId
+            }
+          }
+        });
+        console.log("✅ Screen stream acquired on retry with source ID:", freshSourceId);
+        return retryStream;
+      } catch (retryErr) {
+        console.error("❌ Retry also failed:", retryErr);
+        throw new Error(`Screen capture failed: ${retryErr.message}. Try closing other apps that might be using screen capture.`);
+      }
     }
   };
 
   const startRecording = async () => {
     try {
       console.log('Starting simultaneous screen + webcam recording...');
+      
+      // === ENHANCED CLEANUP: Check for lingering streams and processes ===
+      console.log('🧹 Pre-recording diagnostic check...');
+      
+      // Force stop any lingering audio processes from main process
+      try {
+        const { ipcRenderer } = window.require('electron');
+        const audioCleanup = await ipcRenderer.invoke('force-stop-all-audio');
+        if (audioCleanup.success) {
+          console.log('✅ Stopped any lingering audio processes');
+        }
+      } catch (e) {
+        console.warn('Could not force-stop audio processes:', e);
+      }
+      
+      // Check for any active media streams
+      try {
+        const activeTracks = [];
+        document.querySelectorAll('video, audio').forEach(el => {
+          if (el.srcObject) {
+            el.srcObject.getTracks().forEach(track => {
+              if (track.readyState === 'live') {
+                activeTracks.push({
+                  kind: track.kind,
+                  label: track.label,
+                  enabled: track.enabled,
+                  muted: track.muted,
+                  readyState: track.readyState
+                });
+              }
+            });
+          }
+        });
+        
+        if (activeTracks.length > 0) {
+          console.warn(`⚠️ Found ${activeTracks.length} active media tracks:`, activeTracks);
+          console.log('🧹 Cleaning up active tracks before recording...');
+        } else {
+          console.log('✅ No active media tracks found');
+        }
+      } catch (e) {
+        console.warn('Could not check for active tracks:', e);
+      }
       
       // === NUCLEAR RESET FIRST ===
       await nuclearReset();
