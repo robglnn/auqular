@@ -31,7 +31,7 @@
       ],
       "icon": "assets/icons/Augular256.ico",
       "signAndEditExecutable": false,
-      "compression": "normal"
+      "compression": "store"
     },
     "files": [
       "dist/**/*",
@@ -42,8 +42,21 @@
       "!node_modules/**/*",
       "node_modules/fluent-ffmpeg/**/*",
       "node_modules/which/**/*",
+      "node_modules/isexe/**/*",
+      "node_modules/async/**/*",
+      "node_modules/through2/**/*",
+      "node_modules/readable-stream/**/*",
+      "node_modules/string_decoder/**/*",
+      "node_modules/util-deprecate/**/*",
+      "node_modules/xtend/**/*",
+      "node_modules/commander/**/*",
+      "node_modules/dateformat/**/*",
+      "node_modules/randombytes/**/*",
+      "node_modules/ms/**/*",
       "node_modules/mic/**/*",
-      "node_modules/node-record-lpcm16/**/*"
+      "node_modules/node-record-lpcm16/**/*",
+      "node_modules/ffmpeg-static/**/*",
+      "node_modules/ffprobe-static/**/*"
     ],
     "extraResources": [
       {

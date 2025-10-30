@@ -301,18 +301,29 @@ function ScreenRecorder({ onRecordingComplete }) {
         console.log(`Saving ${framesRef.current.length} frames and converting to video...`);
         
         // Save frames to temp directory
+        // Generate sessionId for this recording to track temp directory
+        const sessionId = Date.now().toString();
         let savedCount = 0;
+        let recordingTempDir = null;
+        
         for (let i = 0; i < framesRef.current.length; i++) {
           const frameData = await framesRef.current[i].arrayBuffer();
           const buffer = Array.from(new Uint8Array(frameData));
-          const framePath = await ipcRenderer.invoke('save-frame-to-temp', {
+          const result = await ipcRenderer.invoke('save-frame-to-temp', {
             frameIndex: i,
-            frameData: buffer
+            frameData: buffer,
+            sessionId: sessionId
           });
-          if (framePath) savedCount++;
+          if (result && result.framePath) {
+            savedCount++;
+            // Store tempDir from first frame (all frames use same dir)
+            if (!recordingTempDir) {
+              recordingTempDir = result.tempDir;
+            }
+          }
         }
         
-        console.log(`Saved ${savedCount} frames to temp directory`);
+        console.log(`Saved ${savedCount} frames to temp directory:`, recordingTempDir);
         
         // Save audio data if available
         let audioFiles = [];
@@ -352,7 +363,8 @@ function ScreenRecorder({ onRecordingComplete }) {
         const result = await ipcRenderer.invoke('convert-frames-to-video', {
           outputPath: outputPath,
           frameRate: 30,
-          audioFiles: audioFiles
+          audioFiles: audioFiles,
+          tempDir: recordingTempDir  // Pass tempDir so FFmpeg knows where frames are
         });
         
         if (result.success) {

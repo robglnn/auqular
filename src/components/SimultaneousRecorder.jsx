@@ -711,18 +711,39 @@ function SimultaneousRecorder({ onRecordingComplete }) {
         console.log(`Saving ${combinedFramesRef.current.length} combined frames and converting to video...`);
         
         // Save frames to temp directory
+        // Generate sessionId for this recording to track temp directory
+        const sessionId = Date.now().toString();
         let savedCount = 0;
+        let recordingTempDir = null;
+        
         for (let i = 0; i < combinedFramesRef.current.length; i++) {
           const frameData = await combinedFramesRef.current[i].arrayBuffer();
           const buffer = Array.from(new Uint8Array(frameData));
-          const framePath = await ipcRenderer.invoke('save-frame-to-temp', {
+          const result = await ipcRenderer.invoke('save-frame-to-temp', {
             frameIndex: i,
-            frameData: buffer
+            frameData: buffer,
+            sessionId: sessionId
           });
-          if (framePath) savedCount++;
+          
+          if (result && result.framePath) {
+            savedCount++;
+            // Store tempDir from first frame (all frames use same dir)
+            if (!recordingTempDir && result.tempDir) {
+              recordingTempDir = result.tempDir;
+              console.log(`📁 Captured tempDir from frame ${i}:`, recordingTempDir);
+            }
+          } else {
+            console.warn(`⚠️ Frame ${i} save failed or returned invalid result:`, result);
+          }
         }
         
-        console.log(`Saved ${savedCount} combined frames to temp directory`);
+        console.log(`Saved ${savedCount} combined frames to temp directory:`, recordingTempDir);
+        
+        if (!recordingTempDir) {
+          console.error('❌ ERROR: recordingTempDir is null! Cannot convert frames.');
+          alert('Error: Failed to save frames. Please try again.');
+          return;
+        }
         
         // Save audio data if available
         // IMPORTANT: Order matters - system audio first, then microphone
@@ -797,11 +818,19 @@ function SimultaneousRecorder({ onRecordingComplete }) {
         // Convert frames to video using FFmpeg (WITH audio embedded)
         // Audio files will be merged into the video file and then deleted
         console.log(`🎬 Converting ${combinedFramesRef.current.length} frames to video with ${audioFiles.length} audio track(s):`, audioFiles);
+        console.log(`📁 Using temp directory:`, recordingTempDir);
+        
+        if (!recordingTempDir) {
+          console.error('❌ ERROR: recordingTempDir is null before convert-frames-to-video call!');
+          alert('Error: Failed to locate saved frames. Please try again.');
+          return;
+        }
         
         const result = await ipcRenderer.invoke('convert-frames-to-video', {
           outputPath: outputPath,
           frameRate: 30,
-          audioFiles: audioFiles  // These will be merged into video and deleted
+          audioFiles: audioFiles,  // These will be merged into video and deleted
+          tempDir: recordingTempDir  // Pass tempDir so FFmpeg knows where frames are
         });
         
         if (result.success) {

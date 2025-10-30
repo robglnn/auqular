@@ -1242,16 +1242,29 @@ ipcMain.handle('save-recorded-video', async (event, { filePath, buffer }) => {
   }
 });
 
+// Store temp directory per recording session
+const recordingTempDirs = new Map();
+
 // IPC handler to save frame images to temp directory
-ipcMain.handle('save-frame-to-temp', async (event, { frameIndex, frameData }) => {
+ipcMain.handle('save-frame-to-temp', async (event, { frameIndex, frameData, sessionId }) => {
   try {
-    const tempDir = path.join(__dirname, 'temp_frames');
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir);
+    // Use OS temp directory instead of __dirname (app.asar is read-only in production)
+    const os = require('os');
+    
+    // Get or create temp directory for this recording session
+    let tempDir = recordingTempDirs.get(sessionId);
+    if (!tempDir) {
+      tempDir = path.join(os.tmpdir(), 'auqular_frames_' + sessionId);
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+      recordingTempDirs.set(sessionId, tempDir);
+      console.log('📁 Created temp directory for recording:', tempDir);
     }
+    
     const framePath = path.join(tempDir, `frame_${frameIndex.toString().padStart(6, '0')}.png`);
     fs.writeFileSync(framePath, Buffer.from(frameData));
-    return framePath;
+    return { framePath, tempDir };
   } catch (error) {
     console.error('Error saving frame:', error);
     return null;
@@ -1260,14 +1273,38 @@ ipcMain.handle('save-frame-to-temp', async (event, { frameIndex, frameData }) =>
 
 // IPC handler to convert frames to video using FFmpeg
 // Merges audio files into the video - returns single video file with embedded audio
-ipcMain.handle('convert-frames-to-video', async (event, { outputPath, frameRate = 30, audioFiles = [] }) => {
+ipcMain.handle('convert-frames-to-video', async (event, { outputPath, frameRate = 30, audioFiles = [], tempDir }) => {
   return new Promise((resolve, reject) => {
     try {
-      const tempDir = path.join(__dirname, 'temp_frames');
-      const inputPattern = path.join(tempDir, 'frame_%06d.png');
+      // Use tempDir passed from save-frame-to-temp, or fallback to OS temp
+      const os = require('os');
+      const framesDir = tempDir || path.join(os.tmpdir(), 'auqular_frames');
+      const inputPattern = path.join(framesDir, 'frame_%06d.png');
       
-      console.log('Converting frames to video WITH audio:', inputPattern, '->', outputPath);
-      console.log('Audio files to merge:', audioFiles);
+      console.log('🎬 Converting frames to video WITH audio:', inputPattern, '->', outputPath);
+      console.log('📁 TempDir received:', tempDir);
+      console.log('📁 FramesDir being used:', framesDir);
+      console.log('📁 Input pattern:', inputPattern);
+      console.log('🎵 Audio files to merge:', audioFiles);
+      
+      // Verify frames directory exists
+      if (!fs.existsSync(framesDir)) {
+        const error = new Error(`Frames directory does not exist: ${framesDir}`);
+        console.error('❌', error.message);
+        reject(error);
+        return;
+      }
+      
+      // Check if any frames exist
+      const frameFiles = fs.readdirSync(framesDir).filter(f => f.startsWith('frame_') && f.endsWith('.png'));
+      console.log(`📸 Found ${frameFiles.length} frame files in directory`);
+      
+      if (frameFiles.length === 0) {
+        const error = new Error(`No frame files found in directory: ${framesDir}`);
+        console.error('❌', error.message);
+        reject(error);
+        return;
+      }
       
       // Build FFmpeg command
       let command = ffmpeg(inputPattern)
@@ -1341,13 +1378,22 @@ ipcMain.handle('convert-frames-to-video', async (event, { outputPath, frameRate 
         .on('end', () => {
           console.log('FFmpeg conversion complete (video with embedded audio)');
           
-          // Clean up temp frames
-          if (fs.existsSync(tempDir)) {
-            fs.readdirSync(tempDir).forEach(file => {
-              fs.unlinkSync(path.join(tempDir, file));
-            });
-            fs.rmdirSync(tempDir);
-            console.log('Temp frames cleaned up');
+          // Clean up temp frames directory
+          if (framesDir && fs.existsSync(framesDir)) {
+            try {
+              fs.readdirSync(framesDir).forEach(file => {
+                fs.unlinkSync(path.join(framesDir, file));
+              });
+              fs.rmdirSync(framesDir);
+              console.log('🧹 Temp frames directory cleaned up:', framesDir);
+              // Also remove from session map
+              const sessionToRemove = Array.from(recordingTempDirs.entries()).find(([_, dir]) => dir === framesDir)?.[0];
+              if (sessionToRemove) {
+                recordingTempDirs.delete(sessionToRemove);
+              }
+            } catch (err) {
+              console.warn('⚠️ Error cleaning up temp frames:', err);
+            }
           }
           
           // Clean up audio files since they're now embedded in video
@@ -1388,6 +1434,25 @@ ipcMain.handle('convert-frames-to-video', async (event, { outputPath, frameRate 
           console.error('FFmpeg error:', err);
           console.error('FFmpeg stdout:', stdout);
           console.error('FFmpeg stderr:', stderr);
+          
+          // Clean up temp frames directory even on error
+          if (framesDir && fs.existsSync(framesDir)) {
+            try {
+              fs.readdirSync(framesDir).forEach(file => {
+                fs.unlinkSync(path.join(framesDir, file));
+              });
+              fs.rmdirSync(framesDir);
+              console.log('🧹 Temp frames directory cleaned up after error:', framesDir);
+              // Also remove from session map
+              const sessionToRemove = Array.from(recordingTempDirs.entries()).find(([_, dir]) => dir === framesDir)?.[0];
+              if (sessionToRemove) {
+                recordingTempDirs.delete(sessionToRemove);
+              }
+            } catch (cleanupErr) {
+              console.warn('⚠️ Error cleaning up temp frames after error:', cleanupErr);
+            }
+          }
+          
           reject(err);
         })
         .run();
