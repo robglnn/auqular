@@ -35,15 +35,21 @@ if (app.isPackaged) {
 
 let mainWindow;
 
+app.on('ready', () => {
+  const originalGetSources = desktopCapturer.getSources;
+  desktopCapturer.getSources = (options) => originalGetSources({ ...options, fetchWindowIcons: false });
+});
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
-    webPreferences: {
-      nodeIntegration: true,  // Enable for MediaRecorder compatibility
-      contextIsolation: false,  // Required for MediaRecorder to work in Electron
+  webPreferences: {
+    nodeIntegration: true,  // Enable for MediaRecorder compatibility - we'll be careful about security
+    contextIsolation: false,  // Required for both MediaRecorder and contextBridge to work
       webSecurity: false,  // Allow local file access for audio/video playback
-      allowRunningInsecureContent: true  // Allow drag/drop files
+      allowRunningInsecureContent: true,  // Allow drag/drop files
+      preload: path.join(__dirname, 'preload.js')
     }
   });
   
@@ -73,14 +79,6 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  // === FORCE CLEAR CACHED SOURCES ON APP START ===
-  // Invalidate desktopCapturer cache to prevent stale source IDs
-  const originalGetSources = desktopCapturer.getSources;
-  desktopCapturer.getSources = async (options) => {
-    // Force fresh sources - no caching
-    return originalGetSources({ ...options, fetchWindowIcons: false });
-  };
-  
   // CRITICAL: Configure session handlers BEFORE creating window
   // This ensures getDisplayMedia requests are properly handled
 
@@ -309,7 +307,10 @@ ipcMain.handle('export-video', async (event, { inputPath, outputPath, startTime,
       .outputOptions('-crf', '23') // Quality preset
       .save(outputPath)
       .on('progress', (progress) => {
-        event.sender.send('export-progress', progress.percent);
+        const progressPercent = progress.percent;
+        if (progressPercent !== undefined && progressPercent !== null) {
+          event.sender.send('export-progress', progressPercent);
+        }
       })
       .on('end', () => {
         resolve(outputPath);
@@ -565,15 +566,16 @@ ipcMain.handle('export-multi-lane', async (event, { outputPath, videoClips, audi
         command
           .save(outputPath)
           .on('start', (commandLine) => {
-            console.log('FFmpeg command:', commandLine);
             event.sender.send('export-progress', 0);
           })
           .on('progress', (progress) => {
-            console.log('Export progress:', progress.percent, '%');
-            event.sender.send('export-progress', progress.percent);
+            const progressPercent = progress.percent;
+            if (progressPercent !== undefined && progressPercent !== null) {
+              event.sender.send('export-progress', progressPercent);
+            }
           })
           .on('end', () => {
-            console.log('Export complete:', outputPath);
+            event.sender.send('export-progress', 100);
             resolve(outputPath);
           })
           .on('error', (err, stdout, stderr) => {

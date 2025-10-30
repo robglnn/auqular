@@ -75,7 +75,8 @@
 - ✅ Connect "Export" button to IPC
 - ✅ Show save dialog
 - ✅ Call export-multi-lane with correct parameters
-- ✅ Export progress events (logged to console)
+- ✅ Export progress indicator (XX% in blue next to "Auqular")
+- ✅ Progress updates in real-time during export
 - ✅ Handle export completion/error (basic alerts)
 - ✅ Show success message
 - ✅ Merges visible video and audio lanes into single MP4
@@ -139,7 +140,7 @@
 **Build**: ✅ Working (468 KiB bundle)  
 **App Launch**: ✅ Launches successfully  
 **Core Features**: ✅ 100% complete  
-**Export**: ✅ Working (with lane visibility support)  
+**Export**: ✅ Working (with progress indicator and lane visibility support)  
 **Webcam Recording**: ✅ Working (Canvas + FFmpeg)  
 **Screen Recording**: ✅ Working (desktopCapturer + Canvas + FFmpeg)  
 **Simultaneous Recording**: ✅ Working (Loom-style PiP + Audio)  
@@ -237,7 +238,6 @@
 ### Non-Critical
 - DevTools console errors (harmless cache and autofill warnings)
 - GPU cache errors in Electron (harmless, common on Windows)
-- No export progress UI yet (progress logged to console)
 
 #### Non-Critical
 - System audio recording tabled (configuration issues; microphone works)

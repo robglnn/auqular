@@ -39,7 +39,7 @@ All core features have been implemented, tested, and packaged into a Windows exe
    - Save dialog integration
    - FFmpeg export with trimming
    - 1080p scaling option
-   - Progress events supported
+   - Real-time progress indicator (XX% in UI)
 
 6. **Windows Packaging**
    - Portable executable (.exe)
@@ -104,7 +104,6 @@ Both versions include:
 ### Non-Critical
 - Bundle size exceeds web standards (acceptable for desktop)
 - No file drag/drop (file picker only)
-- Export progress not visible in UI (logged to console)
 - Unsigned executable (Windows may show warnings)
 
 ### Platform

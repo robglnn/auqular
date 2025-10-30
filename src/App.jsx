@@ -18,6 +18,7 @@ function App() {
   const [playheadPosition, setPlayheadPosition] = useState(0);
   const [showRecordingPanel, setShowRecordingPanel] = useState(false);
   const [recordingType, setRecordingType] = useState('webcam'); // 'webcam', 'screen', or 'simultaneous'
+  const [exportProgress, setExportProgress] = useState(null); // null or 0-100
 
   const playbackStateRef = useRef({
     animationId: null,
@@ -32,6 +33,40 @@ function App() {
     setVisibleClips(filteredClips);
     window.visibleClips = filteredClips; // For timeline access if needed
   }, [clips, lanes]);
+
+  // Listen to export progress events
+  useEffect(() => {
+    let ipcRenderer;
+    try {
+      ipcRenderer = window.require ? window.require('electron').ipcRenderer : null;
+    } catch (e) {
+      console.error('Failed to get ipcRenderer:', e);
+      return;
+    }
+
+    if (!ipcRenderer) return;
+
+    const handleProgress = (event, progress) => {
+      let progressNum;
+      if (typeof progress === 'number') {
+        progressNum = progress;
+      } else if (typeof progress === 'string') {
+        progressNum = parseFloat(progress);
+      } else {
+        return;
+      }
+
+      if (isNaN(progressNum)) return;
+
+      setExportProgress(Math.round(progressNum));
+    };
+
+    ipcRenderer.on('export-progress', handleProgress);
+
+    return () => {
+      ipcRenderer.removeListener('export-progress', handleProgress);
+    };
+  }, []);
 
   // Update handleLaneVisibilityToggle to update lanes state
   const handleLaneVisibilityToggle = (laneId) => {
@@ -112,10 +147,24 @@ function App() {
   };
 
   const handleExport = async () => {
-    const { ipcRenderer } = window.require('electron');
+    let ipcRenderer;
+    try {
+      ipcRenderer = window.require ? window.require('electron').ipcRenderer : null;
+    } catch (e) {
+      alert('Export functionality unavailable - electron API not loaded');
+      return;
+    }
+
+    if (!ipcRenderer) {
+      alert('Export functionality unavailable');
+      return;
+    }
+
     const outputPath = await ipcRenderer.invoke('show-save-dialog');
-    
+
     if (outputPath) {
+      setExportProgress(0);
+      
       // Collect visible clips
       const visibleLanes = lanes.filter(lane => lane.visible);
       const videoClips = [];
@@ -161,10 +210,14 @@ function App() {
           audioClips,
           scaleTo1080p: true // or make configurable
         });
+        setExportProgress(null);
         alert(`Export successful: ${result}`);
       } catch (error) {
+        setExportProgress(null);
         alert(`Export failed: ${error.message}`);
       }
+    } else {
+      setExportProgress(null);
     }
   };
 
@@ -583,6 +636,7 @@ function App() {
         onImportAudio={handleImportAudio}
         onExport={handleExport}
         canExport={clips.length > 0}
+        exportProgress={exportProgress}
         onRecord={() => {
           // CRITICAL: Stop playback before showing recording panel (releases camera/mic on Windows)
           if (isPlaying) {

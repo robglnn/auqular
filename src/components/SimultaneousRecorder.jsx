@@ -56,6 +56,34 @@ function SimultaneousRecorder({ onRecordingComplete }) {
     });
   };
 
+  const fetchDesktopSources = async () => {
+    if (window.electronAPI?.getDesktopSources) {
+      const sources = await window.electronAPI.getDesktopSources();
+      if (Array.isArray(sources) && sources.length > 0) {
+        return sources;
+      }
+    }
+
+    if (typeof window.require === 'function') {
+      try {
+        const { desktopCapturer } = window.require('electron');
+        if (desktopCapturer?.getSources) {
+          const sources = await desktopCapturer.getSources({
+            types: ['screen'],
+            thumbnailSize: { width: 1, height: 1 }
+          });
+          if (Array.isArray(sources) && sources.length > 0) {
+            return sources;
+          }
+        }
+      } catch (err) {
+        console.error('desktopCapturer fallback failed:', err);
+      }
+    }
+
+    throw new Error('No desktop sources found');
+  };
+
   // === NUCLEAR RESET: FORCE KILL ALL MEDIA DEVICES + RESTART STACK ===
   const nuclearReset = async () => {
     console.log("☢️ NUCLEAR MEDIA STACK RESET INITIATED");
@@ -82,8 +110,7 @@ function SimultaneousRecorder({ onRecordingComplete }) {
 
     // 4. **FORCE desktopCapturer CACHE CLEAR**
     try {
-      const { ipcRenderer } = window.require('electron');
-      await ipcRenderer.invoke('get-desktop-sources');
+      await fetchDesktopSources();
       console.log("desktopCapturer cache probed");
     } catch (e) {
       console.log("desktopCapturer cache probed (error ignored)");
@@ -93,33 +120,47 @@ function SimultaneousRecorder({ onRecordingComplete }) {
     await new Promise(r => setTimeout(r, 1200));
   };
 
-  // Get screen stream with fresh desktopCapturer
-  const getScreenStream = async () => {
-    const { ipcRenderer } = window.require('electron');
-    
-    // FORCE FRESH SOURCES — NO CACHING
-    const sources = await ipcRenderer.invoke('get-desktop-sources');
+  // Force desktopCapturer reset and acquire fresh screen stream
+  const resetDesktopCapturer = async () => {
+    console.log("NUCLEAR desktopCapturer RESET");
 
-    if (!sources || sources.length === 0) throw new Error("No screen sources");
-
-    const screenSource = sources.find(source => source.id.startsWith('screen:')) || sources[0];
-    console.log("Using screen source:", screenSource.id);
-
-    // **CRITICAL: Use EXACT source ID + 'desktop' constraint**
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        mandatory: {
-          chromeMediaSource: 'desktop',
-          chromeMediaSourceId: screenSource.id,
-          minWidth: 1280,
-          maxWidth: 1920,
-          minHeight: 720,
-          maxHeight: 1080
-        }
+    document.querySelectorAll('video').forEach(video => {
+      if (video.srcObject) {
+        video.srcObject.getTracks().forEach(track => track.stop());
+        video.srcObject = null;
       }
+      video.src = '';
     });
 
-    return stream;
+    const sources = await fetchDesktopSources();
+    return sources.find(source => source.id?.startsWith('screen:'))?.id || sources[0].id;
+  };
+
+  const getScreenStream = async () => {
+    let screenSourceId;
+    try {
+      screenSourceId = await resetDesktopCapturer();
+    } catch (err) {
+      console.error("desktopCapturer failed:", err);
+      throw err;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          mandatory: {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: screenSourceId
+          }
+        }
+      });
+
+      console.log("Screen stream acquired with source ID:", screenSourceId);
+      return stream;
+    } catch (err) {
+      console.error("Failed to acquire screen stream:", err);
+      throw err;
+    }
   };
 
   const startRecording = async () => {
@@ -128,7 +169,8 @@ function SimultaneousRecorder({ onRecordingComplete }) {
       
       // === NUCLEAR RESET FIRST ===
       await nuclearReset();
-      
+      await new Promise(r => setTimeout(r, 1500));
+
       const { ipcRenderer } = window.require('electron');
       
       // === REVERSE ACQUISITION ORDER: Webcam first, then Screen ===
@@ -727,7 +769,7 @@ if (typeof window !== 'undefined') {
     console.clear();
     console.log("🧪 TEST_FIX: Starting nuclear reset and screen stream test...");
     
-    const { ipcRenderer } = window.require('electron');
+    const sources = await fetchDesktopSources();
     
     // Nuclear reset
     console.log("☢️ Running nuclear reset...");
@@ -745,13 +787,15 @@ if (typeof window !== 'undefined') {
         .catch(() => {});
     } catch (e) {}
     
-    await ipcRenderer.invoke('get-desktop-sources').catch(() => {});
+    try {
+      await fetchDesktopSources();
+    } catch (e) {}
     
     await new Promise(r => setTimeout(r, 1200));
     
     // Get screen stream
     try {
-      const sources = await ipcRenderer.invoke('get-desktop-sources');
+      const sources = await fetchDesktopSources();
       const screenSource = sources.find(source => source.id.startsWith('screen:')) || sources[0];
       
       const stream = await navigator.mediaDevices.getUserMedia({
