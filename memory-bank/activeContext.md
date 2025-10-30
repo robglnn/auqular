@@ -1,9 +1,48 @@
 # Active Context: Auqular Development
 
 ## Current Focus
-🎯 **Core Features Complete!** - Continuous playback, sequential clip imports, and all recording features working perfectly. Video now plays seamlessly across clips and loops automatically.
+🎯 **All Core Features Complete!** - Drag-and-drop file import, sequential clip imports, continuous playback, and export functionality all working perfectly. Video now plays seamlessly across clips and loops automatically.
 
 ## Recent Changes (Current Session)
+
+### Drag-and-Drop File Import ✅ COMPLETE! (Latest Session)
+- **Multi-layered interception** - Three-layer approach ensures robust file drop handling
+- **Layer 1 (will-navigate)** - Intercepts `file://` navigation events from Windows Explorer drops
+- **Layer 2 (injected DOM)** - DOM-level handlers for drag/drop events with `webUtils.getPathForFile()` support
+- **Window Handler** - `setWindowOpenHandler` prevents popup windows and extracts file paths
+- **webUtils integration** - Uses Electron's `webUtils.getPathForFile()` for Electron v32+ compatibility
+- **Popup prevention** - Always prevents default behavior to avoid file opening in popup windows
+- **Path extraction** - Handles Windows path formats (`file:///C:/...` and `file:///C|/...`)
+- **Implementation**:
+  - Layer 1 intercepts navigation to `file://` URLs and extracts paths
+  - Layer 2 (injected code) uses `webUtils.getPathForFile()` when `file.path` is null
+  - Window handler catches any popup attempts and converts to file drops
+  - Files imported directly into track 1 sequentially
+- **Result**: Files dragged from Windows Explorer now import directly into timeline without popups, just like button imports
+
+### Sequential Clip Import Fix ✅ COMPLETE! (Latest Session)
+- **Functional state updates** - Fixed clips being replaced instead of appended when importing multiple files
+- **State closure fix** - Changed from `setClips([...clips, newClip])` to `setClips(prev => [...prev, newClip])`
+- **Position calculation** - Moved position calculations inside functional update callback
+- **All import methods updated** - `handleImportVideo`, `handleImportAudio`, `handleImportVideoFile`, `handleImportAudioFile`, `handleRecordingComplete`
+- **Implementation**:
+  - All `setClips` calls now use functional update form to avoid stale closures
+  - Position calculations use `prev` instead of `clips` to ensure latest state
+  - Sequential positioning maintained (clips placed at end of last clip)
+- **Result**: Multiple files can be imported in succession without replacing previous imports - all clips accumulate on timeline
+
+### Export Audio Error Fix ✅ COMPLETE! (Latest Session)
+- **Conditional audio extraction** - Only extracts audio from concatenated videos if ALL clips have audio
+- **createTrimmedClip fix** - Only applies audio codec if source clip has audio, uses `-an` flag if no audio
+- **Prevents FFmpeg errors** - Avoids "Stream specifier 'a' matches no streams" error
+- **Implementation**:
+  - Checks `clipsWithAudio.length === clips.length` before extracting audio from concat result
+  - `createTrimmedClip` checks `clip.hasAudio` before applying audio codec
+  - Explicitly disables audio with `-an` flag when source has no audio
+  - Export completes successfully even when some clips don't have audio
+- **Result**: Export no longer fails when concatenating clips without audio - exports complete successfully
+
+## Recent Changes (Previous Session)
 
 ### Continuous Playback & Sequential Import ✅ COMPLETE! (Latest Session)
 - **Continuous clip transitions** - Video automatically transitions from one clip to the next during playback

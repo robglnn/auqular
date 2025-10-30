@@ -15,9 +15,66 @@ function Toolbar({ onImport, onExportSource, onExport720p, onExport1080p, canExp
       <div
         className={`drop-zone ${isDragging ? 'dragging' : ''}`}
         onClick={onDropZoneClick}
-        onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-        onDragLeave={() => setIsDragging(false)}
-        onDrop={(e) => { e.preventDefault(); setIsDragging(false); }}
+        onDragOver={(e) => { 
+          e.preventDefault(); 
+          e.stopPropagation();
+          setIsDragging(true);
+          if (e.dataTransfer) {
+            e.dataTransfer.dropEffect = 'copy';
+          }
+        }}
+        onDragEnter={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setIsDragging(true);
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setIsDragging(false);
+        }}
+        onDrop={async (e) => { 
+          e.preventDefault(); 
+          e.stopPropagation();
+          setIsDragging(false);
+          
+          // Handle file drop
+          if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            const files = Array.from(e.dataTransfer.files);
+            
+            // Get file paths using webUtils.getPathForFile() (Electron v32+)
+            if (window.require) {
+              const { webUtils, ipcRenderer } = window.require('electron');
+              
+              const fileDataPromises = files.map(async (file) => {
+                let filePath = file.path;
+                
+                // If path is null (Electron v32+), use webUtils.getPathForFile()
+                if (!filePath && webUtils && webUtils.getPathForFile) {
+                  try {
+                    filePath = webUtils.getPathForFile(file);
+                  } catch (err) {
+                    console.warn('⚠️ [Toolbar] webUtils.getPathForFile failed:', err);
+                  }
+                }
+                
+                return {
+                  path: filePath,
+                  name: file.name,
+                  type: file.type || 'application/octet-stream',
+                  size: file.size || 0
+                };
+              });
+              
+              const fileData = await Promise.all(fileDataPromises);
+              const filesWithPaths = fileData.filter(f => f.path);
+              
+              if (filesWithPaths.length > 0) {
+                ipcRenderer.send('files-dropped-layer2', filesWithPaths);
+              }
+            }
+          }
+        }}
         style={{
           display: 'inline-block',
           border: '2px dashed #007acc',

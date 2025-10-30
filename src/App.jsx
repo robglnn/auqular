@@ -101,13 +101,18 @@ function App() {
         endTime: duration,
         trimStart: 0,
         trimEnd: duration,
-        position: clips.length === 0 ? playheadPosition : getLastClipEndPosition(), // Place at end of last clip
+        position: 0, // Will be calculated in functional update
         lane: 'video1', // Default to video lane
         type: 'video' // Explicit type
       };
 
-      setClips([...clips, newClip]);
-      setCurrentClip(newClip);
+      // Use functional update to ensure we always work with latest state
+      setClips(prevClips => {
+        const lastClipEnd = prevClips.length === 0 ? 0 : Math.max(...prevClips.map(c => c.position + (c.trimEnd - c.trimStart)));
+        newClip.position = prevClips.length === 0 ? playheadPosition : lastClipEnd;
+        setCurrentClip(newClip);
+        return [...prevClips, newClip];
+      });
     } catch (error) {
       console.error('Error importing video:', error);
       alert('Failed to import video: ' + error.message);
@@ -136,13 +141,18 @@ function App() {
           thumbnailPath: null, // No thumbnail for audio
         trimStart: 0,
         trimEnd: duration,
-        position: clips.length === 0 ? playheadPosition : getLastClipEndPosition(), // Place at end of last clip
+        position: 0, // Will be calculated in functional update
         lane: targetLane.id,
         type: 'audio',
         label: fileName
       };
         
-        setClips([...clips, newClip]);
+        // Use functional update to ensure we always work with latest state
+        setClips(prevClips => {
+          const lastClipEnd = prevClips.length === 0 ? 0 : Math.max(...prevClips.map(c => c.position + (c.trimEnd - c.trimStart)));
+          newClip.position = prevClips.length === 0 ? playheadPosition : lastClipEnd;
+          return [...prevClips, newClip];
+        });
       }
     } catch (error) {
       console.error('Error importing audio:', error);
@@ -566,12 +576,73 @@ function App() {
       }
     };
 
-    console.log('🎯 Setting up IPC listener for file-dropped events');
+    // Window-level drag and drop handlers
+    const handleDragOver = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = 'copy';
+      }
+    };
+
+    const handleDrop = async (e) => {
+      // ALWAYS prevent default to avoid popup window
+      e.preventDefault();
+      e.stopPropagation();
+      
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        const files = Array.from(e.dataTransfer.files);
+        console.log('📥 [App] Window drop - files:', files.length);
+        
+        // Get file paths - try file.path first, then use IPC to get path via webUtils
+        const fileDataPromises = files.map(async (file) => {
+          let filePath = file.path;
+          
+          // If path is null (Electron v32+), use IPC handler to get path via webUtils
+          if (!filePath && ipcRenderer) {
+            try {
+              // Try to get path via IPC handler (main process has webUtils)
+              filePath = await ipcRenderer.invoke('get-file-path', file);
+              if (filePath) {
+                console.log('📄 [App] Got path via IPC webUtils:', file.name, '→', filePath);
+              }
+            } catch (err) {
+              console.warn('⚠️ [App] get-file-path IPC failed:', err);
+            }
+          }
+          
+          return {
+            path: filePath,
+            name: file.name,
+            type: file.type || 'application/octet-stream',
+            size: file.size || 0
+          };
+        });
+        
+        const fileData = await Promise.all(fileDataPromises);
+        const filesWithPaths = fileData.filter(f => f.path);
+        
+        if (filesWithPaths.length > 0 && ipcRenderer) {
+          console.log('✅ [App] Sending', filesWithPaths.length, 'file(s) with paths to main process');
+          ipcRenderer.send('files-dropped-layer2', filesWithPaths);
+        } else {
+          console.warn('❌ [App] No valid file paths found after drop');
+        }
+      }
+    };
+
+    console.log('🎯 Setting up IPC listener and window drag/drop handlers');
     ipcRenderer.on('file-dropped', handleFileDrop);
     
+    // Add window-level drag/drop handlers
+    window.addEventListener('dragover', handleDragOver, false);
+    window.addEventListener('drop', handleDrop, false);
+    
     return () => {
-      console.log('🧹 Cleaning up IPC listener for file-dropped events');
+      console.log('🧹 Cleaning up IPC listener and drag/drop handlers');
       ipcRenderer.removeListener('file-dropped', handleFileDrop);
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('drop', handleDrop);
     };
   }, [handleImportVideoFile, handleImportAudioFile]);
 
@@ -601,26 +672,29 @@ function App() {
       }
       
       // Calculate position: place at end of last clip, or at playhead if no clips exist
-      const lastClipEnd = getLastClipEndPosition();
-      const newPosition = clips.length === 0 ? playheadPosition : lastClipEnd;
-      
-      const newClip = {
-        id: Date.now(),
-        filePath,
-        duration,
-        thumbnailPath,
-        width: resolution.width,
-        height: resolution.height,
-        fileSize,
-        trimStart: 0,
-        trimEnd: duration,
-        position: newPosition,
-        lane: 'video1',
-        type: 'video'
-      };
-      
-      setClips([...clips, newClip]);
-      setCurrentClip(newClip);
+      // Use functional update to ensure we always work with latest state
+      setClips(prevClips => {
+        const lastClipEnd = prevClips.length === 0 ? 0 : Math.max(...prevClips.map(c => c.position + (c.trimEnd - c.trimStart)));
+        const newPosition = prevClips.length === 0 ? playheadPosition : lastClipEnd;
+        
+        const newClip = {
+          id: Date.now(),
+          filePath,
+          duration,
+          thumbnailPath,
+          width: resolution.width,
+          height: resolution.height,
+          fileSize,
+          trimStart: 0,
+          trimEnd: duration,
+          position: newPosition,
+          lane: 'video1',
+          type: 'video'
+        };
+        
+        setCurrentClip(newClip);
+        return [...prevClips, newClip];
+      });
     } catch (error) {
       console.error('Error importing video:', error);
     }
@@ -646,21 +720,27 @@ function App() {
       const targetLane = audioLanes[audioLanes.length - 1] || { id: 'audio1' };
       const fileName = filePath.split(/[\\/]/).pop() || filePath;
       
-      const newClip = {
-        id: Date.now(),
-        filePath,
-        duration,
-        thumbnailPath: null,
-        fileSize,
-        trimStart: 0,
-        trimEnd: duration,
-        position: clips.length === 0 ? playheadPosition : getLastClipEndPosition(), // Place at end of last clip
-        lane: targetLane.id,
-        type: 'audio',
-        label: fileName
-      };
-      
-      setClips([...clips, newClip]);
+      // Use functional update to ensure we always work with latest state
+      setClips(prevClips => {
+        const lastClipEnd = prevClips.length === 0 ? 0 : Math.max(...prevClips.map(c => c.position + (c.trimEnd - c.trimStart)));
+        const newPosition = prevClips.length === 0 ? playheadPosition : lastClipEnd;
+        
+        const newClip = {
+          id: Date.now(),
+          filePath,
+          duration,
+          thumbnailPath: null,
+          fileSize,
+          trimStart: 0,
+          trimEnd: duration,
+          position: newPosition, // Place at end of last clip
+          lane: targetLane.id,
+          type: 'audio',
+          label: fileName
+        };
+        
+        return [...prevClips, newClip];
+      });
     } catch (error) {
       console.error('Error importing audio:', error);
     }
@@ -697,6 +777,7 @@ function App() {
           console.warn('Could not get file size:', e);
         }
         
+        // Position will be calculated in functional update
         newClips.push({
           id: Date.now(),
           filePath: videoPath,
@@ -707,7 +788,7 @@ function App() {
           fileSize,
           trimStart: 0,
           trimEnd: duration,
-          position: clips.length === 0 ? 0 : getLastClipEndPosition(), // Place at end of last clip
+          position: 0, // Will be calculated in functional update
           lane: 'video1',
           type: 'video'
         });
@@ -719,7 +800,19 @@ function App() {
         console.log('Note: Audio files provided but audio is already embedded in video:', recordingData.audioFiles);
       }
       
-      setClips(prev => [...prev, ...newClips]);
+      // Use functional update to ensure we always work with latest state
+      setClips(prev => {
+        // Calculate starting position: end of last clip, or 0 if no clips exist
+        let currentPosition = prev.length === 0 ? 0 : Math.max(...prev.map(c => c.position + (c.trimEnd - c.trimStart)));
+        
+        // Update positions for all new clips sequentially
+        newClips.forEach(clip => {
+          clip.position = currentPosition;
+          currentPosition += (clip.trimEnd - clip.trimStart); // Move position forward for next clip
+        });
+        
+        return [...prev, ...newClips];
+      });
     } catch (error) {
       console.error('Error importing recording:', error);
     }

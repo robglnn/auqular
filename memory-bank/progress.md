@@ -34,14 +34,17 @@
 
 ## What's Left to Build 🔨
 
-### Import & Media Management ✅ COMPLETE! (Sequential Positioning Working)
+### Import & Media Management ✅ COMPLETE! (Sequential Positioning + Drag-and-Drop Working)
 - ✅ Connect "Import Video" button to IPC handler
 - ✅ Display imported clips in timeline
 - ✅ Generate and display thumbnails
 - ✅ **Sequential clip positioning** - New imports automatically placed at end of most recent clip
 - ✅ **Helper function** - `getLastClipEndPosition()` calculates timeline end for new imports
 - ✅ **All import methods** - Button imports, drag-and-drop, and recordings all use sequential positioning
-- ⚠️ **Note**: Drag/drop file import from Windows Explorer still needs main process handler (uses file picker as fallback)
+- ✅ **Drag-and-drop file import** - Multi-layered interception (will-navigate + injected DOM + window handler)
+- ✅ **webUtils integration** - Uses Electron's `webUtils.getPathForFile()` for Electron v32+ compatibility
+- ✅ **Popup prevention** - Window open handler prevents files from opening in popup windows
+- ✅ **Functional state updates** - Fixed clips being replaced when importing multiple files
 - ✅ Store clips in app state
 
 ### Timeline Functionality ✅ COMPLETE (Enhanced Multi-Lane + Sequential Playback)
@@ -99,6 +102,9 @@
 - ✅ **Sequential clip concatenation** - Clips on same lane export back-to-back sequentially
 - ✅ **Lane-based grouping** - Export groups clips by lane, concatenates same-lane, overlays different-lane
 - ✅ **Video audio extraction** - Extracts and includes audio from video clips with embedded audio
+- ✅ **Conditional audio extraction** - Only extracts audio if ALL clips being concatenated have audio
+- ✅ **createTrimmedClip audio handling** - Only applies audio codec if source has audio, uses `-an` if no audio
+- ✅ **Export error prevention** - Prevents "Stream specifier 'a' matches no streams" FFmpeg errors
 - ✅ **Audio timeline positioning** - Video audio delayed correctly based on timelineStart
 
 ### Advanced Features (Stretch)
@@ -153,7 +159,7 @@
 - ✅ Split clip at playhead (S key)
 - ✅ Delete clip from timeline (Delete/Backspace key)
 - ✅ Zoom timeline (Ctrl+Mouse Wheel)
-- ✅ Drag-and-drop file import (needs fix - drag/drop handler not working)
+- ✅ Drag-and-drop file import (multi-layered interception working perfectly)
 - ⚠️ Horizontal scrollbar (functional but buggy)
 - ⚠️ Shift+Mouse Wheel horizontal scroll (functional but inconsistent)
 
@@ -190,15 +196,17 @@
   - May be related to video element state, CSS layering, or rendering pipeline
 - **Next Steps**: Investigate video element rendering, CSS z-index/layering, Electron video playback quirks
 
-🚨 **Drag and Drop File Import Failure**
-- **Status**: ACTIVE - Blocks convenient file import workflow
-- **Description**: Files dragged from Windows Explorer show red X cursor and drop fails
-- **Impact**: Users must use file picker button instead of convenient drag/drop
+✅ **Drag and Drop File Import - SOLVED!**
+- **Status**: RESOLVED - Multi-layered interception approach working perfectly
+- **Description**: Files dragged from Windows Explorer now import directly into timeline
+- **Solution**: Three-layer approach (will-navigate handler + injected DOM handlers + window open handler)
 - **Technical Details**:
-  - Event handlers attached to window, document, body with `{ passive: false, capture: true }`
-  - Comprehensive logging added but drop events not being captured
-  - May require Electron main process handler or different event capture strategy
-- **Next Steps**: Research Electron drag/drop best practices, consider IPC-based file handling
+  - Layer 1: `will-navigate` event intercepts `file://` URLs from Windows Explorer drops
+  - Layer 2: Injected DOM handlers use `webUtils.getPathForFile()` for Electron v32+ compatibility
+  - Window Handler: `setWindowOpenHandler` prevents popup windows and extracts file paths
+  - Always prevents default to avoid popup windows
+  - Handles Windows path formats (`file:///C:/...` and `file:///C|/...`)
+- **Result**: Drag-and-drop file import now works perfectly, files import directly into track 1 sequentially
 
 ### Critical
 ✅ **MediaRecorder API Incompatibility - SOLVED!**

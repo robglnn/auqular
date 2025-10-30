@@ -71,9 +71,51 @@ function createWindow() {
     }
   });
   
+  // Prevent popup windows from opening (e.g., when files are dropped)
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    console.log('🔍 [Window Handler] Blocked window open:', url);
+    
+    // If it's a file:// URL, handle it as a file drop instead
+    if (url.startsWith('file://')) {
+      // Extract file path and handle like Layer 1
+      let filePath = url.replace(/^file:\/\//, '');
+      filePath = decodeURIComponent(filePath);
+      
+      if (process.platform === 'win32') {
+        filePath = filePath.replace(/^\/+/, '').replace(/^([A-Z])\|/, '$1:').replace(/\//g, '\\');
+      }
+      
+      if (fs.existsSync(filePath)) {
+        const fileName = path.basename(filePath);
+        const fileExt = path.extname(filePath).toLowerCase();
+        const stats = fs.statSync(filePath);
+        
+        const mimeTypes = {
+          '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.avi': 'video/x-msvideo',
+          '.mkv': 'video/x-matroska', '.webm': 'video/webm',
+          '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.aac': 'audio/aac', '.ogg': 'audio/ogg'
+        };
+        
+        const fileData = [{
+          path: filePath,
+          name: fileName,
+          type: mimeTypes[fileExt] || 'application/octet-stream',
+          size: stats.size
+        }];
+        
+        console.log('📤 [Window Handler] Sending dropped file to renderer:', fileData);
+        mainWindow.webContents.send('file-dropped', fileData);
+      }
+    }
+    
+    // Always prevent window opening
+    return { action: 'deny' };
+  });
+  
   // MULTI-LAYERED FILE DROP INTERCEPTION
   
-  // Layer 1: Intercept navigation attempts
+  // Layer 1: Intercept navigation attempts (handles file:// drops from Windows Explorer)
+  // This is the PRIMARY handler for Windows Explorer drag/drop
   mainWindow.webContents.on('will-navigate', (event, url) => {
     console.log('🔍 [Layer 1] Navigation intercepted:', url);
     
@@ -83,18 +125,34 @@ function createWindow() {
       event.preventDefault();
       
       // Extract file path from file:// URL
-      let filePath = decodeURIComponent(url.replace('file:///', ''));
+      // Windows: file:///C:/path/to/file.mp4 -> C:\path\to\file.mp4
+      // Handle URL encoding and path normalization
+      let filePath = url.replace(/^file:\/\//, ''); // Remove file:// prefix
+      filePath = decodeURIComponent(filePath);
       
-      // Normalize path for Windows
+      // Handle Windows paths
       if (process.platform === 'win32') {
+        // file:///C:/... or file:///C|/... -> C:\...
+        // Remove leading slashes
+        filePath = filePath.replace(/^\/+/, '');
+        // Handle C| notation (some Windows paths use | instead of :)
+        filePath = filePath.replace(/^([A-Z])\|/, '$1:');
+        // Convert forward slashes to backslashes
         filePath = filePath.replace(/\//g, '\\');
       }
       
       console.log('✅ [Layer 1] Extracted absolute path:', filePath);
       
+      // Verify file exists
+      if (!fs.existsSync(filePath)) {
+        console.error('❌ [Layer 1] File does not exist:', filePath);
+        return;
+      }
+      
       // Get file info
       const fileName = path.basename(filePath);
       const fileExt = path.extname(filePath).toLowerCase();
+      const stats = fs.statSync(filePath);
       
       const mimeTypes = {
         '.mp4': 'video/mp4',
@@ -112,12 +170,12 @@ function createWindow() {
         path: filePath,
         name: fileName,
         type: mimeTypes[fileExt] || 'application/octet-stream',
-        size: 0
+        size: stats.size
       }];
       
       console.log('📤 [Layer 1] Sending to renderer:', fileData);
       mainWindow.webContents.send('file-dropped', fileData);
-    } else if (!url.startsWith('devtools://')) {
+    } else if (!url.startsWith('devtools://') && !url.startsWith('http://localhost') && !url.startsWith('http://127.0.0.1')) {
       event.preventDefault();
       console.log('🚫 [Layer 1] Blocked navigation to:', url);
     }
@@ -143,7 +201,8 @@ function createWindow() {
           return false;
         };
         
-        const handleDrop = (e) => {
+        const handleDrop = async (e) => {
+          // ALWAYS prevent default to avoid popup window
           e.preventDefault();
           e.stopPropagation();
           e.stopImmediatePropagation();
@@ -153,40 +212,47 @@ function createWindow() {
           if (e.dataTransfer.files.length > 0) {
             const files = Array.from(e.dataTransfer.files);
             
-            // CRITICAL: file.path might be undefined, try multiple methods
-            const fileData = files.map(file => {
-              // Try various ways to get the path
-              const filePath = file.path || 
-                               (file.getAsFile && file.getAsFile().path) ||
-                               (file.webkitRelativePath) ||
-                               null;
+            // Get file paths - try file.path first, then webUtils.getPathForFile() (Electron v32+)
+            const { webUtils, ipcRenderer } = window.require('electron');
+            
+            const fileDataPromises = files.map(async (file) => {
+              let filePath = file.path;
+              
+              // If path is null (Electron v32+), try webUtils.getPathForFile()
+              if (!filePath && webUtils && webUtils.getPathForFile) {
+                try {
+                  filePath = webUtils.getPathForFile(file);
+                  console.log('📄 [Layer 2] Got path via webUtils:', file.name, '→', filePath);
+                } catch (err) {
+                  console.warn('⚠️ [Layer 2] webUtils.getPathForFile failed:', err);
+                  // If webUtils fails, try IPC handler as fallback
+                  try {
+                    filePath = await ipcRenderer.invoke('get-file-path', file);
+                    if (filePath) {
+                      console.log('📄 [Layer 2] Got path via IPC:', file.name, '→', filePath);
+                    }
+                  } catch (err2) {
+                    console.warn('⚠️ [Layer 2] IPC get-file-path also failed:', err2);
+                  }
+                }
+              }
               
               return {
                 path: filePath,
                 name: file.name,
-                type: file.type,
-                size: file.size,
-                _raw: file // Send raw file object too
+                type: file.type || 'application/octet-stream',
+                size: file.size || 0
               };
             });
             
-            console.log('📁 [Layer 2] Files with paths:', fileData.map(f => ({ name: f.name, path: f.path })));
+            const fileData = await Promise.all(fileDataPromises);
+            const filesWithPaths = fileData.filter(f => f.path);
             
-            // If NO paths available, alert user to use file picker
-            if (fileData.every(f => !f.path)) {
-              console.error('❌ [Layer 2] Cannot get file paths - Windows UIPI blocking');
-              alert('Drag & drop blocked by Windows.\\n\\nPlease use the "📁 Add Files" button instead.');
-              return false;
-            }
-            
-            // Send via IPC
-            if (window.require) {
-              const { ipcRenderer } = window.require('electron');
-              // Filter out files without paths
-              const validFiles = fileData.filter(f => f.path);
-              if (validFiles.length > 0) {
-                ipcRenderer.send('files-dropped-layer2', validFiles);
-              }
+            if (filesWithPaths.length > 0) {
+              console.log('✅ [Layer 2] Sending', filesWithPaths.length, 'file(s) with paths');
+              ipcRenderer.send('files-dropped-layer2', filesWithPaths);
+            } else {
+              console.warn('❌ [Layer 2] No valid file paths found - Layer 1 or Window Handler should catch this');
             }
           }
           
@@ -654,10 +720,19 @@ ipcMain.handle('export-multi-lane', async (event, { outputPath, videoClips, audi
             
             clipCmd
               .videoCodec('libx264')
-              .audioCodec('aac')
               .outputOptions('-preset', 'fast')
               .outputOptions('-crf', '23')
-              .outputOptions('-pix_fmt', 'yuv420p')
+              .outputOptions('-pix_fmt', 'yuv420p');
+            
+            // Only encode audio if the source clip has audio
+            if (clip.hasAudio) {
+              clipCmd = clipCmd.audioCodec('aac');
+            } else {
+              // Explicitly disable audio encoding if source has no audio
+              clipCmd = clipCmd.outputOptions('-an'); // No audio
+            }
+            
+            clipCmd
               .save(tempPath)
               .on('end', () => resolve(tempPath))
               .on('error', (err) => reject(err))
@@ -851,13 +926,14 @@ ipcMain.handle('export-multi-lane', async (event, { outputPath, videoClips, audi
         // Extract audio from video clips (videos may have embedded audio from simultaneous recording)
         if (needsConcat && !needsOverlay) {
           // Concat mode: Audio from concatenated video (input 0)
-          // Check if any of the concatenated clips have audio
+          // Check if ALL clips being concatenated have audio (concat demuxer needs all clips to have audio)
           const laneId = laneIds[0];
           const clips = videoLanes[laneId];
           const clipsWithAudio = clips.filter(c => c.hasAudio);
           
-          if (clipsWithAudio.length > 0) {
-            // Concat demuxer preserves audio from all clips automatically
+          // Only extract audio if ALL clips have audio (concat demuxer preserves audio only if all inputs have it)
+          if (clipsWithAudio.length > 0 && clipsWithAudio.length === clips.length) {
+            // All clips have audio - concat demuxer will preserve audio
             // Extract audio from input 0 (the concat result)
             // Delay based on first clip's timelineStart
             const firstClipDelay = Math.max(0, (clips[0].timelineStart - timelineStart) * 1000);
@@ -865,6 +941,8 @@ ipcMain.handle('export-multi-lane', async (event, { outputPath, videoClips, audi
             audioFilters.push(`[0:a]adelay=${Math.round(firstClipDelay)}|${Math.round(firstClipDelay)}${videoAudioLabel}`);
             delayedAudioLabels.push(videoAudioLabel);
             console.log(`🎵 Extracting audio from concatenated video (input 0) with delay ${firstClipDelay}ms`);
+          } else if (clipsWithAudio.length > 0 && clipsWithAudio.length < clips.length) {
+            console.warn(`⚠️ Some clips have audio but not all - skipping audio extraction from concat result (${clipsWithAudio.length}/${clips.length} clips have audio)`);
           }
         } else if (needsOverlay) {
           // Overlay mode: Extract audio from each video input
@@ -941,8 +1019,10 @@ ipcMain.handle('export-multi-lane', async (event, { outputPath, videoClips, audi
           }
         }
         
-        // Add audio filters
-        allFilters.push(...audioFilters);
+        // Add audio filters (only if we have valid audio tracks)
+        if (audioFilters.length > 0) {
+          allFilters.push(...audioFilters);
+        }
 
         // Apply filters
         if (allFilters.length > 0) {
@@ -952,7 +1032,9 @@ ipcMain.handle('export-multi-lane', async (event, { outputPath, videoClips, audi
             command = command.outputOptions('-map', '[a]');
           }
         } else {
+          // No filters - just map video
           command = command.outputOptions('-map', '0:v');
+          // Only map audio if we have audio tracks (from standalone audio clips)
           if (delayedAudioLabels.length > 0) {
             command = command.outputOptions('-map', '[a]');
           }
@@ -1064,16 +1146,63 @@ ipcMain.handle('open-file-dialog', async () => {
   return [];
 });
 
-// Layer 2 IPC handler - receives files from injected code
+// IPC handler to get file path using webUtils (for Electron v32+)
+ipcMain.handle('get-file-path', async (event, fileBlob) => {
+  try {
+    // In main process, we can use webContents.webUtils
+    const filePath = event.sender.webUtils.getPathForFile(fileBlob);
+    return filePath;
+  } catch (error) {
+    console.error('Error getting file path via webUtils:', error);
+    return null;
+  }
+});
+
+// Layer 2 IPC handler - receives files from injected code or renderer
 ipcMain.on('files-dropped-layer2', (event, fileData) => {
   console.log('📨 [Layer 2] Main process received dropped files:', fileData.length);
-  fileData.forEach(file => {
-    console.log('  📄 [Layer 2]', file.name, '→', file.path);
+  
+  // Validate and normalize file paths
+  const validFiles = fileData.map(file => {
+    let filePath = file.path;
+    
+    // If path is missing but name exists, log warning
+    if (!filePath && file.name) {
+      console.warn('⚠️ [Layer 2] No path for file:', file.name, '- skipping');
+      return null;
+    }
+    
+    // Normalize Windows paths
+    if (filePath && process.platform === 'win32') {
+      filePath = filePath.replace(/\//g, '\\');
+    }
+    
+    // Verify file exists
+    if (filePath && !fs.existsSync(filePath)) {
+      console.warn('⚠️ [Layer 2] File does not exist:', filePath);
+      return null;
+    }
+    
+    return {
+      path: filePath,
+      name: file.name || path.basename(filePath || ''),
+      type: file.type || 'application/octet-stream',
+      size: file.size || (filePath ? fs.statSync(filePath).size : 0)
+    };
+  }).filter(file => file && file.path); // Filter out invalid files
+  
+  if (validFiles.length === 0) {
+    console.error('❌ [Layer 2] No valid files to process');
+    return;
+  }
+  
+  validFiles.forEach(file => {
+    console.log('  ✅ [Layer 2]', file.name, '→', file.path);
   });
   
   // Forward to renderer with 'file-dropped' event (App.jsx is already listening)
-  event.sender.send('file-dropped', fileData);
-  console.log('✅ [Layer 2] Forwarded files to renderer process');
+  event.sender.send('file-dropped', validFiles);
+  console.log('✅ [Layer 2] Forwarded', validFiles.length, 'valid file(s) to renderer process');
 });
 
 ipcMain.handle('get-desktop-sources', async () => {

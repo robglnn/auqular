@@ -5,7 +5,8 @@ A lightweight desktop video editor built with Electron, React, and Konva.js. Ins
 ## ✨ Features
 
 ### Core Editing
-- **Video Import**: Import MP4/MOV/AVI/MKV/WEBM files via file picker or drag-and-drop
+- **Video Import**: Import MP4/MOV/AVI/MKV/WEBM files via file picker or drag-and-drop from Windows Explorer
+- **Sequential Import**: New files automatically placed at end of timeline (no stacking at 00:00:00)
 - **Multi-Lane Timeline**: Final Cut Pro-style timeline with unlimited video and audio lanes
 - **Video Thumbnails**: First/last frame previews on each clip for easy identification
 - **Clip Trimming**: Drag handles to set in/out points with real-time preview
@@ -34,7 +35,9 @@ A lightweight desktop video editor built with Electron, React, and Konva.js. Ins
 - **Multiple Resolutions**: Export at source resolution, 720p (1280x720), or 1080p (1920x1080)
 - **Export Progress Indicator**: Real-time progress display (XX%) during export
 - **Multi-Lane Export**: Merges visible video and audio lanes into single MP4
+- **Sequential Concatenation**: Clips on same lane export back-to-back sequentially
 - **Audio Mixing**: Combines multiple audio tracks with proper timeline positioning
+- **Conditional Audio**: Intelligently handles clips with/without audio streams
 - **Lane Visibility**: Toggle lane visibility (eyeball icon) to control what's exported
 
 ## 🚀 Quick Start
@@ -123,9 +126,6 @@ auqular/
 
 ## 🐛 Known Issues
 
-### Minor (Non-Blocking)
-- **Drag-and-Drop Import**: Files dragged from Windows Explorer show red X cursor and drop fails (file picker works as alternative)
-
 ### Non-Critical
 - GPU cache errors in console (harmless, Windows Electron issue)
 - Bundle size warning (acceptable for desktop app)
@@ -138,6 +138,8 @@ auqular/
 
 ### Core Features ✅
 - ✅ Video/audio import with thumbnails
+- ✅ Drag-and-drop file import from Windows Explorer (multi-layered interception)
+- ✅ Sequential clip positioning (new imports at end of timeline)
 - ✅ Multi-lane timeline (Final Cut Pro-style)
 - ✅ Video thumbnails on clips
 - ✅ Drag/drop clip positioning
@@ -167,7 +169,9 @@ auqular/
 - ✅ Multi-resolution export (Source/720p/1080p)
 - ✅ Real-time export progress indicator
 - ✅ Multi-lane merging
+- ✅ Sequential clip concatenation (same lane clips back-to-back)
 - ✅ Audio track mixing
+- ✅ Conditional audio extraction (handles clips with/without audio)
 - ✅ Timeline position accuracy
 - ✅ Lane visibility support
 
