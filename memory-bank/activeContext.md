@@ -35,6 +35,7 @@
 - **Audio positioning** - Uses adelay filters to position audio correctly relative to timeline start
 - **Fixed**: Audio now properly positioned even if starting before/after video
 - **Fixed**: Export duration now matches longest clip with proper padding
+- **Fixed**: Handles cases where inputs have no audio streams
 
 ### SoX Bundling for System Audio ✅ COMPLETE (But Tabled for Now)
 - Bundled SoX Windows binary and DLLs in `bin/sox/` folder
@@ -78,6 +79,12 @@
 - **Export integration** - Only visible lanes included in export
 - **Vertical scrolling** - Mouse wheel support for 3+ lanes
 - **Fixed handleWheel bug** - Restored missing function that caused blank screen
+
+### Export Functionality Fix ✅ COMPLETE
+- Added dynamic audio stream probing using ffprobe
+- Only include audio in FFmpeg mix if streams exist
+- Wrapped probing in async IIFE to enable await in CommonJS
+- Confirmed export works without errors even if inputs lack audio
 
 ## Recent Changes (Previous Session)
 

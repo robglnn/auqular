@@ -82,6 +82,7 @@
 - ✅ Mixes multiple audio tracks together
 - ✅ Respects timeline positions with adelay for audio
 - ✅ Adds black frame padding before/after video as needed
+- ✅ Dynamically handles inputs with/without audio streams to prevent FFmpeg errors
 
 ### Advanced Features (Stretch)
 - ✅ **Webcam Recording** (COMPLETE - Canvas + FFmpeg approach)
@@ -208,7 +209,7 @@
 ### Medium Priority
 
 ⚠️ **Export Timeline Positioning Not Accurate**
-- **Status**: RESOLVED - Added adelay filters for audio positioning
+- **Status**: RESOLVED - Added adelay filters for audio positioning and dynamic audio probing
 - **Description**: Audio clips starting before video get forced to video start in export
 - **Impact**: Exported videos don't match what user sees in timeline
 - **Details**: Export uses timelineStart/timelineEnd but FFmpeg filter chain may not be correctly applying positioning
