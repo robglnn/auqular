@@ -472,18 +472,15 @@ ipcMain.handle('export-multi-lane', async (event, { outputPath, videoClips, audi
       }
 
       console.log('Export starting - video clips:', videoClips.length, 'audio clips:', audioClips.length);
-      console.log('Video clips:', videoClips.map(c => ({ path: c.inputPath, start: c.startTime, end: c.endTime })));
-      console.log('Audio clips:', audioClips.map(c => ({ path: c.inputPath, start: c.startTime, end: c.endTime })));
+      console.log('Video clips:', videoClips.map(c => ({ path: c.inputPath, lane: c.lane, timelineStart: c.timelineStart, timelineEnd: c.timelineEnd })));
+      console.log('Audio clips:', audioClips.map(c => ({ path: c.inputPath, lane: c.lane, timelineStart: c.timelineStart, timelineEnd: c.timelineEnd })));
 
-      // Primary video is first clip
       if (videoClips.length === 0) {
         reject(new Error('No video clips to export'));
         return;
       }
 
-      let command = ffmpeg(videoClips[0].inputPath);
-
-      // Calculate timeline bounds - find earliest start and latest end
+      // Calculate timeline bounds
       const allTimelineStarts = [
         ...videoClips.map(c => c.timelineStart || 0),
         ...audioClips.map(c => c.timelineStart || 0)
@@ -495,31 +492,9 @@ ipcMain.handle('export-multi-lane', async (event, { outputPath, videoClips, audi
       
       const timelineStart = Math.min(...allTimelineStarts, 0);
       const timelineEnd = Math.max(...allTimelineEnds, 0);
-      const maxDuration = timelineEnd - timelineStart; // Total timeline duration
+      const maxDuration = timelineEnd - timelineStart;
       
       console.log('Timeline bounds:', { start: timelineStart, end: timelineEnd, duration: maxDuration });
-      console.log('Video clips:', videoClips.map(c => ({ timelineStart: c.timelineStart, timelineEnd: c.timelineEnd })));
-      console.log('Audio clips:', audioClips.map(c => ({ timelineStart: c.timelineStart, timelineEnd: c.timelineEnd })));
-      
-      // Get primary video duration (after trim)
-      const primaryVideoStart = videoClips[0].startTime || 0;
-      const primaryVideoEnd = videoClips[0].endTime || (videoClips[0].timelineEnd || 0) - (videoClips[0].timelineStart || 0);
-      const primaryVideoDuration = primaryVideoEnd - primaryVideoStart;
-      
-      // Calculate when video should start relative to timeline start
-      const videoTimelineStart = videoClips[0].timelineStart || 0;
-      const videoOffset = videoTimelineStart - timelineStart; // How much black space before video
-      
-      // Apply trim to primary video first (before adding other inputs)
-      if (videoClips[0].startTime || videoClips[0].endTime) {
-        const startTime = videoClips[0].startTime || 0;
-        if (startTime > 0) {
-          command = command.seekInput(startTime);
-        }
-        // Set duration to video's trimmed duration
-        const videoDuration = primaryVideoDuration;
-        command = command.duration(videoDuration);
-      }
 
       // Helper to probe if file has audio stream
       const hasAudio = async (filePath) => {
@@ -537,114 +512,307 @@ ipcMain.handle('export-multi-lane', async (event, { outputPath, videoClips, audi
       };
 
       (async () => {  // Wrap in async IIFE
-        // Probing logic here
-        const videoAudioStatus = await Promise.all(videoClips.map(async (clip) => ({
+        // Probe audio status for all clips
+        const videoClipsWithAudio = await Promise.all(videoClips.map(async (clip) => ({
           ...clip,
           hasAudio: await hasAudio(clip.inputPath)
         })));
 
-        const audioAudioStatus = await Promise.all(audioClips.map(async (clip) => ({
+        const audioClipsWithAudio = await Promise.all(audioClips.map(async (clip) => ({
           ...clip,
           hasAudio: await hasAudio(clip.inputPath)
         })));
 
-        // Rest of the export logic using videoAudioStatus and audioAudioStatus
-        // Only include audio from clips that have it
+        // Group video clips by lane
+        const videoLanes = {};
+        videoClipsWithAudio.forEach(clip => {
+          const lane = clip.lane || 'default';
+          if (!videoLanes[lane]) {
+            videoLanes[lane] = [];
+          }
+          videoLanes[lane].push(clip);
+        });
 
-        // Build filters array
-        const filters = [];
-        let videoOutput = '[0:v]';
-        let videoMap = '0:v';
-        
-        // If multiple videos, overlay them (e.g., PiP for webcam)
-        if (videoClips.length > 1) {
-          command = command.input(videoClips[1].inputPath);
-          // Apply trim to second video if needed
-          if (videoClips[1].startTime || videoClips[1].endTime) {
-            // Note: seekInput applies to last input, so we need to use inputOptions
-            command = command.inputOptions([
-              `-ss ${videoClips[1].startTime || 0}`
-            ]);
-            if (videoClips[1].endTime) {
-              const dur = videoClips[1].endTime - (videoClips[1].startTime || 0);
-              command = command.inputOptions([`-t ${dur}`]);
+        // Sort clips within each lane by timelineStart
+        Object.keys(videoLanes).forEach(lane => {
+          videoLanes[lane].sort((a, b) => (a.timelineStart || 0) - (b.timelineStart || 0));
+        });
+
+        console.log('Video lanes:', Object.keys(videoLanes).map(lane => ({
+          lane,
+          clips: videoLanes[lane].length,
+          timeline: videoLanes[lane].map(c => ({ start: c.timelineStart, end: c.timelineEnd }))
+        })));
+
+        // Determine if we need concat (multiple clips on same lane) or overlay (different lanes)
+        const laneIds = Object.keys(videoLanes);
+        const needsConcat = laneIds.some(lane => videoLanes[lane].length > 1);
+        const needsOverlay = laneIds.length > 1;
+
+        let command;
+        const tempDir = require('os').tmpdir();
+        const tempFiles = [];
+        const overlayFilters = []; // Declare here for scope
+
+        // Helper to create trimmed intermediate file for a clip
+        const createTrimmedClip = async (clip, index) => {
+          const tempPath = path.join(tempDir, `clip_${index}_${Date.now()}.mp4`);
+          tempFiles.push(tempPath);
+          
+          return new Promise((resolve, reject) => {
+            let clipCmd = ffmpeg(clip.inputPath);
+            
+            if (clip.startTime > 0) {
+              clipCmd = clipCmd.seekInput(clip.startTime);
+            }
+            if (clip.endTime && clip.endTime > clip.startTime) {
+              const duration = clip.endTime - clip.startTime;
+              clipCmd = clipCmd.duration(duration);
+            }
+            
+            clipCmd
+              .videoCodec('libx264')
+              .audioCodec('aac')
+              .outputOptions('-preset', 'fast')
+              .outputOptions('-crf', '23')
+              .outputOptions('-pix_fmt', 'yuv420p')
+              .save(tempPath)
+              .on('end', () => resolve(tempPath))
+              .on('error', (err) => reject(err))
+              .run();
+          });
+        };
+
+        // If we have sequential clips on same lane, use concat demuxer
+        if (needsConcat && !needsOverlay) {
+          // Single lane with multiple clips - concatenate them
+          const laneId = laneIds[0];
+          const clips = videoLanes[laneId];
+          
+          console.log(`Concat mode: ${clips.length} clips on lane ${laneId}`);
+          
+          // Create trimmed intermediate files
+          const trimmedPaths = [];
+          for (let i = 0; i < clips.length; i++) {
+            const trimmedPath = await createTrimmedClip(clips[i], i);
+            trimmedPaths.push(trimmedPath);
+          }
+          
+          // Create concat file
+          const concatPath = path.join(tempDir, `concat_${Date.now()}.txt`);
+          tempFiles.push(concatPath);
+          const concatContent = trimmedPaths.map(p => `file '${p.replace(/\\/g, '/')}'`).join('\n');
+          fs.writeFileSync(concatPath, concatContent);
+          
+          // Use concat demuxer
+          command = ffmpeg();
+          command = command.input(concatPath);
+          command = command.inputOptions(['-f', 'concat', '-safe', '0']);
+          
+        } else if (needsOverlay) {
+          // Multiple lanes - need to overlay or concat then overlay
+          // For now, simple approach: concat clips on each lane, then overlay lanes
+          // TODO: More sophisticated handling for overlapping vs sequential
+          
+          // For simplicity, take first lane as base, overlay others
+          const baseLane = laneIds[0];
+          const baseClips = videoLanes[baseLane];
+          
+          // If base lane has multiple clips, concat them first
+          if (baseClips.length > 1) {
+            const trimmedPaths = [];
+            for (let i = 0; i < baseClips.length; i++) {
+              const trimmedPath = await createTrimmedClip(baseClips[i], i);
+              trimmedPaths.push(trimmedPath);
+            }
+            
+            const concatPath = path.join(tempDir, `concat_base_${Date.now()}.txt`);
+            tempFiles.push(concatPath);
+            const concatContent = trimmedPaths.map(p => `file '${p.replace(/\\/g, '/')}'`).join('\n');
+            fs.writeFileSync(concatPath, concatContent);
+            
+            command = ffmpeg();
+            command = command.input(concatPath);
+            command = command.inputOptions(['-f', 'concat', '-safe', '0']);
+          } else {
+            // Single clip on base lane
+            command = ffmpeg(baseClips[0].inputPath);
+            if (baseClips[0].startTime > 0) {
+              command = command.seekInput(baseClips[0].startTime);
+            }
+            if (baseClips[0].endTime && baseClips[0].endTime > baseClips[0].startTime) {
+              const duration = baseClips[0].endTime - baseClips[0].startTime;
+              command = command.duration(duration);
             }
           }
           
-          // Overlay second video bottom-right (PiP)
-          filters.push(`[0:v][1:v]overlay=main_w-overlay_w-20:main_h-overlay_h-20[v]`);
-          videoOutput = '[v]';
-          videoMap = '[v]';
+          // Overlay other lanes (for now, just take first clip from each other lane)
+          // TODO: Handle multiple clips on overlay lanes
+          let videoInputIndex = 1;
+          let currentOutput = '[0:v]';
+          
+          for (let i = 1; i < laneIds.length; i++) {
+            const overlayLane = laneIds[i];
+            const overlayClips = videoLanes[overlayLane];
+            if (overlayClips.length > 0) {
+              const overlayClip = overlayClips[0]; // Take first clip for now
+              command = command.input(overlayClip.inputPath);
+              if (overlayClip.startTime > 0) {
+                command = command.inputOptions([`-ss ${overlayClip.startTime}`]);
+              }
+              if (overlayClip.endTime && overlayClip.endTime > overlayClip.startTime) {
+                const duration = overlayClip.endTime - overlayClip.startTime;
+                command = command.inputOptions([`-t ${duration}`]);
+              }
+              
+              const nextOutput = `[v${i}]`;
+              overlayFilters.push(`${currentOutput}[${videoInputIndex}:v]overlay=main_w-overlay_w-20:main_h-overlay_h-20${nextOutput}`);
+              currentOutput = nextOutput;
+              videoInputIndex++;
+            }
+          }
+          
+          // Store overlay filters for later combination with audio filters
+          if (overlayFilters.length > 0) {
+            // Will combine with audio filters below
+          }
+          
+        } else {
+          // Single clip, simple case
+          const clip = videoClipsWithAudio[0];
+          command = ffmpeg(clip.inputPath);
+          if (clip.startTime > 0) {
+            command = command.seekInput(clip.startTime);
+          }
+          if (clip.endTime && clip.endTime > clip.startTime) {
+            const duration = clip.endTime - clip.startTime;
+            command = command.duration(duration);
+          }
         }
 
-        // Add audio inputs with trimming
-        const audioInputs = [];
-        let audioInputIndex = videoClips.length > 1 ? 2 : 1; // Start after video inputs
-        
-        // Check if primary video has audio (always include [0:a] if video might have audio)
-        // We'll try to map it, FFmpeg will handle if it doesn't exist
-        const hasVideoAudio = true; // Assume video might have audio
-        
-        // Add audio clip inputs with trimming via inputOptions
-        audioClips.forEach((audio, index) => {
-          if (audio.hasAudio) { // Add this check
-            command = command.input(audio.inputPath);
-            
-            // Apply trim via inputOptions (more reliable than complex filters for simple trimming)
-            if (audio.startTime || audio.endTime) {
-              const startTime = audio.startTime || 0;
-              const duration = audio.endTime ? (audio.endTime - startTime) : undefined;
-              const inputOptions = [];
-              if (startTime > 0) {
-                inputOptions.push(`-ss ${startTime}`);
-              }
-              if (duration) {
-                inputOptions.push(`-t ${duration}`);
-              }
-              if (inputOptions.length > 0) {
-                // Apply to the last input (the audio we just added)
-                command = command.inputOptions(inputOptions);
-              }
-            }
-            
-            const delay = Math.max(0, (audio.timelineStart - timelineStart) * 1000);
-            const delayedLabel = `[a_delayed${index}]`;
-            filters.push(`[${audioInputIndex}:a]adelay=${Math.round(delay)}|${Math.round(delay)}${delayedLabel}`);
-            audioInputs.push(delayedLabel);
-            audioInputIndex++;
+        // Handle audio - group by lane and process
+        const audioLanes = {};
+        audioClipsWithAudio.forEach(clip => {
+          const lane = clip.lane || 'default';
+          if (!audioLanes[lane]) {
+            audioLanes[lane] = [];
           }
+          audioLanes[lane].push(clip);
         });
 
-        // Handle video audio with delay if it exists
-        if (hasVideoAudio && videoAudioStatus[0].hasAudio) { // Check primary video
-          const videoAudioDelay = Math.max(0, (videoClips[0].timelineStart - timelineStart) * 1000);
-          const videoAudioLabel = '[a_video]';
-          filters.push(`[0:a]adelay=${Math.round(videoAudioDelay)}|${Math.round(videoAudioDelay)}${videoAudioLabel}`);
-          audioInputs.unshift(videoAudioLabel);
-        }
+        // Sort audio clips within each lane by timelineStart
+        Object.keys(audioLanes).forEach(lane => {
+          audioLanes[lane].sort((a, b) => (a.timelineStart || 0) - (b.timelineStart || 0));
+        });
+
+        // Build audio processing
+        const audioInputs = [];
+        let audioInputIndex = 0;
         
-        if (audioInputs.length > 0) {
-          if (audioInputs.length > 1) {
-            // Multiple audio inputs - mix them
-            filters.push(`${audioInputs.join('')}amix=inputs=${audioInputs.length}:duration=longest[a]`);
-          } else {
-            // Single audio - just pass through
-            filters.push(`${audioInputs[0]}acopy[a]`);
+        // Calculate base input index (depends on video composition)
+        // - Concat demuxer: 1 input (the concat file)
+        // - Overlay: multiple video inputs
+        // - Single clip: 1 input
+        let baseVideoInputCount = 1;
+        if (needsConcat && !needsOverlay) {
+          baseVideoInputCount = 1; // Concat file is input 0
+        } else if (needsOverlay) {
+          // Count video inputs: base + overlay lanes
+          baseVideoInputCount = 1; // Base video or concat
+          for (let i = 1; i < laneIds.length; i++) {
+            baseVideoInputCount++; // Each overlay lane adds an input
           }
         }
 
-        // Apply all filters
-        if (filters.length > 0) {
-          command = command.complexFilter(filters.join(';'));
-          command = command.outputOptions('-map', videoMap);
-          if (audioInputs.length > 0) {
+        // Process video audio from concatenated/composed video
+        // TODO: Extract audio from concatenated video streams
+        
+        // Process standalone audio clips with delays
+        Object.keys(audioLanes).forEach(lane => {
+          const laneAudioClips = audioLanes[lane];
+          laneAudioClips.forEach((audioClip, clipIndex) => {
+            if (audioClip.hasAudio) {
+              command = command.input(audioClip.inputPath);
+              
+              // Apply trim
+              if (audioClip.startTime > 0 || audioClip.endTime) {
+                const inputOptions = [];
+                if (audioClip.startTime > 0) {
+                  inputOptions.push(`-ss ${audioClip.startTime}`);
+                }
+                if (audioClip.endTime && audioClip.endTime > audioClip.startTime) {
+                  const duration = audioClip.endTime - audioClip.startTime;
+                  inputOptions.push(`-t ${duration}`);
+                }
+                if (inputOptions.length > 0) {
+                  command = command.inputOptions(inputOptions);
+                }
+              }
+              
+              // Delay audio to match timeline position
+              const delay = Math.max(0, (audioClip.timelineStart - timelineStart) * 1000);
+              const delayedLabel = `[a_delayed${audioInputIndex}]`;
+              audioInputs.push({
+                label: delayedLabel,
+                inputIndex: baseVideoInputCount + audioInputIndex, // Offset by video input count
+                delay: delay
+              });
+              audioInputIndex++;
+            }
+          });
+        });
+
+        // Build audio filters
+        const audioFilters = [];
+        const delayedAudioLabels = [];
+        
+        // Get video audio if available (from base video/composition)
+        // For now, skip video audio extraction - TODO: Add support
+        
+        // Apply delays to audio inputs
+        audioInputs.forEach((audioInput, index) => {
+          const delayedLabel = `[a_delayed${index}]`;
+          audioFilters.push(`[${audioInput.inputIndex}:a]adelay=${Math.round(audioInput.delay)}|${Math.round(audioInput.delay)}${delayedLabel}`);
+          delayedAudioLabels.push(delayedLabel);
+        });
+
+        // Mix all audio tracks
+        if (delayedAudioLabels.length > 0) {
+          if (delayedAudioLabels.length > 1) {
+            audioFilters.push(`${delayedAudioLabels.join('')}amix=inputs=${delayedAudioLabels.length}:duration=longest[a]`);
+          } else {
+            audioFilters.push(`${delayedAudioLabels[0]}acopy[a]`);
+          }
+        }
+
+        // Combine video and audio filters
+        const allFilters = [];
+        let finalVideoOutput = '0:v';
+        
+        if (needsOverlay && overlayFilters.length > 0) {
+          // Apply overlay filters
+          allFilters.push(...overlayFilters);
+          // Find the last overlay output (should be the last filter's output)
+          const lastOverlayMatch = overlayFilters[overlayFilters.length - 1].match(/\[([^\]]+)\]$/);
+          if (lastOverlayMatch) {
+            finalVideoOutput = lastOverlayMatch[1];
+          }
+        }
+        
+        // Add audio filters
+        allFilters.push(...audioFilters);
+
+        // Apply filters
+        if (allFilters.length > 0) {
+          command = command.complexFilter(allFilters.join(';'));
+          command = command.outputOptions('-map', finalVideoOutput);
+          if (delayedAudioLabels.length > 0) {
             command = command.outputOptions('-map', '[a]');
           }
         } else {
-          // No filters - simple passthrough
           command = command.outputOptions('-map', '0:v');
-          if (audioInputs.length > 0 && audioInputs[0] === '[0:a]') {
-            command = command.outputOptions('-map', '0:a');
+          if (delayedAudioLabels.length > 0) {
+            command = command.outputOptions('-map', '[a]');
           }
         }
 
@@ -654,47 +822,34 @@ ipcMain.handle('export-multi-lane', async (event, { outputPath, videoClips, audi
           .audioCodec('aac')
           .outputOptions('-preset', 'fast')
           .outputOptions('-crf', '23')
-          .outputOptions('-pix_fmt', 'yuv420p'); // Ensure compatibility
+          .outputOptions('-pix_fmt', 'yuv420p')
+          .outputOptions('-r', '30'); // Standardize to 30fps
 
-        // Build video filter: add black padding before/after video if needed
-        if (videoOffset > 0 || maxDuration > (primaryVideoDuration + videoOffset)) {
-          // Need padding before and/or after video
-          let videoInput = '[0:v]';
-          let videoOutput = '[0:v]';
-          
-          // Add padding before video if video starts after timeline start
-          if (videoOffset > 0) {
-            videoOutput = '[v_start]';
-            filters.push(`${videoInput}tpad=start_mode=clone:start_duration=${videoOffset}${videoOutput}`);
-            videoInput = videoOutput;
-          }
-          
-          // Add padding after video if total duration exceeds video duration + offset
-          const paddingAfter = maxDuration - (primaryVideoDuration + videoOffset);
-          if (paddingAfter > 0) {
-            const prevOutput = videoInput;
-            videoOutput = '[v_final]';
-            filters.push(`${prevOutput}tpad=stop_mode=clone:stop_duration=${paddingAfter}${videoOutput}`);
-          } else {
-            videoOutput = videoInput;
-          }
-          
-          videoMap = videoOutput;
-        }
-        
-        // Apply scaling as a SIMPLE video filter (AFTER complex filter, not part of it)
+        // Apply scaling
         const scaleNum = scaleResolution ? parseInt(scaleResolution, 10) : null;
-        
         if (scaleNum === 720) {
           command = command.videoFilters('scale=1280:720');
         } else if (scaleNum === 1080) {
           command = command.videoFilters('scale=1920:1080');
         }
-        // scaleResolution = null means source resolution (no scaling)
+
+        // Cleanup function
+        const cleanup = () => {
+          tempFiles.forEach(file => {
+            try {
+              if (fs.existsSync(file)) {
+                fs.unlinkSync(file);
+              }
+            } catch (e) {
+              console.warn(`Failed to delete temp file ${file}:`, e);
+            }
+          });
+        };
 
         command
           .save(outputPath)
           .on('start', (commandLine) => {
+            console.log('FFmpeg command:', commandLine);
             event.sender.send('export-progress', 0);
           })
           .on('progress', (progress) => {
@@ -704,10 +859,12 @@ ipcMain.handle('export-multi-lane', async (event, { outputPath, videoClips, audi
             }
           })
           .on('end', () => {
+            cleanup();
             event.sender.send('export-progress', 100);
             resolve(outputPath);
           })
           .on('error', (err, stdout, stderr) => {
+            cleanup();
             console.error('FFmpeg export error:', err);
             console.error('FFmpeg stdout:', stdout);
             console.error('FFmpeg stderr:', stderr);
@@ -1322,4 +1479,5 @@ ipcMain.handle('save-audio-data', async (event, { outputPath, audioType }) => {
     return { success: false, error: error.message };
   }
 });
+
 

@@ -183,7 +183,8 @@ function App() {
               startTime: clip.trimStart, // Source file trim start (for file seeking)
               endTime: clip.trimEnd,     // Source file trim end (for file seeking)
               timelineStart: clipStart,   // Timeline position (for duration calculation)
-              timelineEnd: clipEnd       // Timeline end position (for export duration)
+              timelineEnd: clipEnd,       // Timeline end position (for export duration)
+              lane: clip.lane            // Lane ID for grouping sequential clips
             });
           } else if (clip.type === 'audio') {
             // For audio, we need to account for timeline position when it starts before video
@@ -196,6 +197,7 @@ function App() {
               endTime: clip.trimEnd,        // Source file trim end
               timelineStart: clipStart,     // Timeline position
               timelineEnd: clipEnd,        // Timeline end position
+              lane: clip.lane,             // Lane ID for grouping sequential clips
               // Offset from timeline start (if audio starts before video timeline 0)
               timelineOffset: clipStart < 0 ? Math.abs(clipStart) : 0
             });

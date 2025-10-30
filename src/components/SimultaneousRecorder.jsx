@@ -57,23 +57,35 @@ function SimultaneousRecorder({ onRecordingComplete }) {
   };
 
   const fetchDesktopSources = async () => {
-    if (window.electronAPI?.getDesktopSources) {
-      const sources = await window.electronAPI.getDesktopSources();
-      if (Array.isArray(sources) && sources.length > 0) {
-        return sources;
+    // Try IPC handler first (most reliable - already configured in main.js)
+    if (typeof window.require === 'function') {
+      try {
+        const { ipcRenderer } = window.require('electron');
+        const sources = await ipcRenderer.invoke('get-desktop-sources');
+        if (Array.isArray(sources) && sources.length > 0) {
+          console.log(`✅ Found ${sources.length} desktop sources via IPC:`, sources.map(s => ({ id: s.id, name: s.name })));
+          return sources;
+        }
+      } catch (err) {
+        console.error('IPC get-desktop-sources failed:', err);
       }
     }
 
+    // Fallback: Direct desktopCapturer call (request BOTH screen and window types)
     if (typeof window.require === 'function') {
       try {
         const { desktopCapturer } = window.require('electron');
         if (desktopCapturer?.getSources) {
+          // KEY FIX: Request both 'screen' AND 'window' types (not just 'screen')
           const sources = await desktopCapturer.getSources({
-            types: ['screen'],
+            types: ['screen', 'window'],  // Changed from ['screen'] to ['screen', 'window']
             thumbnailSize: { width: 1, height: 1 }
           });
           if (Array.isArray(sources) && sources.length > 0) {
+            console.log(`✅ Found ${sources.length} desktop sources via direct call:`, sources.map(s => ({ id: s.id, name: s.name })));
             return sources;
+          } else {
+            console.warn('⚠️ desktopCapturer returned empty array');
           }
         }
       } catch (err) {
@@ -133,7 +145,22 @@ function SimultaneousRecorder({ onRecordingComplete }) {
     });
 
     const sources = await fetchDesktopSources();
-    return sources.find(source => source.id?.startsWith('screen:'))?.id || sources[0].id;
+    console.log(`📺 Available sources:`, sources.map(s => ({ id: s.id, name: s.name, displayId: s.display_id })));
+    
+    // Prefer screen sources, but fall back to window sources if no screens available
+    const screenSource = sources.find(source => source.id?.startsWith('screen:'));
+    if (screenSource) {
+      console.log(`✅ Using screen source: ${screenSource.name} (${screenSource.id})`);
+      return screenSource.id;
+    }
+    
+    // Fallback to first available source (window or screen)
+    if (sources.length > 0) {
+      console.log(`⚠️ No screen source found, using first available: ${sources[0].name} (${sources[0].id})`);
+      return sources[0].id;
+    }
+    
+    throw new Error('No desktop sources available');
   };
 
   const getScreenStream = async () => {
