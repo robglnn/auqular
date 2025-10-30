@@ -16,8 +16,10 @@ A lightweight desktop video editor built with Electron, React, and Konva.js. Ins
 - **Clip Deletion**: Delete selected clips (Delete/Backspace key)
 
 ### Playback & Preview
+- **Continuous Playback**: Smooth, uninterrupted playback across all clips without stopping at boundaries
 - **Sequential Playback**: Clips play continuously one after another
 - **Loop Playback**: Auto-restart from beginning when reaching end
+- **Seamless Transitions**: Playhead continues moving smoothly when transitioning between clips
 - **Multi-Track Audio**: Simultaneous playback of overlapping audio tracks
 - **Preview Player**: HTML5 video player with play/pause controls
 - **Timeline Sync**: Click timeline to seek, playhead tracks current position
@@ -121,9 +123,8 @@ auqular/
 
 ## 🐛 Known Issues
 
-### Critical (In Progress)
-- **Video Preview Rendering**: Video shows black screen during playback but displays correctly when paused
-- **Drag-and-Drop Import**: Files dragged from Windows Explorer show red X cursor and drop fails (file picker works)
+### Minor (Non-Blocking)
+- **Drag-and-Drop Import**: Files dragged from Windows Explorer show red X cursor and drop fails (file picker works as alternative)
 
 ### Non-Critical
 - GPU cache errors in console (harmless, Windows Electron issue)
@@ -148,8 +149,10 @@ auqular/
 - ✅ Lane visibility toggles
 
 ### Playback & Preview ✅
+- ✅ Continuous playback without interruption at clip boundaries
 - ✅ Sequential playback through clips
 - ✅ Loop playback (auto-restart)
+- ✅ Seamless transitions between clips
 - ✅ Multi-track simultaneous audio
 - ✅ Preview player with controls
 - ✅ Timeline sync and seeking
@@ -184,7 +187,7 @@ ISC
 - ✅ Import and display videos
 - ✅ Multi-lane timeline with thumbnails
 - ✅ Trim, split, and delete clips
-- ✅ Sequential playback with looping
+- ✅ Continuous playback with seamless transitions and looping
 - ✅ Export to MP4 with multiple resolutions
 - ✅ Stability and reliability
 

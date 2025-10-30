@@ -276,20 +276,36 @@ function App() {
 
   const handleTimeUpdate = (timelinePosition) => {
     // Video is playing and driving the playhead - update it from video's currentTime
+    // Playhead moves CONTINUOUSLY from 00:00:00 to end, then loops
     if (isPlaying) {
-      setPlayheadPosition(timelinePosition);
-      playbackStateRef.current.position = timelinePosition;
+      // Calculate end of timeline for loop check
+      const allClips = window.visibleClips || clips;
+      const maxEnd = allClips.length > 0 
+        ? Math.max(...allClips.map(clip => clip.position + (clip.trimEnd - clip.trimStart)))
+        : 0;
+      
+      // Check for loop condition - if playhead passed end, loop to start
+      let finalPosition = timelinePosition;
+      if (maxEnd > 0 && timelinePosition >= maxEnd) {
+        finalPosition = 0; // Loop to start
+      }
+      
+      setPlayheadPosition(finalPosition);
+      playbackStateRef.current.position = finalPosition;
       playbackStateRef.current.timestamp = Date.now();
       
-      // Find clip at new position
-      // IMPORTANT: Only update currentClip if it's actually different to prevent reload loops
-      const clipAtPosition = getClipAtPosition(timelinePosition);
+      // Find clip at new position (handles gaps and transitions naturally)
+      const clipAtPosition = getClipAtPosition(finalPosition);
       if (clipAtPosition) {
         // Only update if clip ID changed OR if we don't have a current clip
         if (!currentClip || currentClip.id !== clipAtPosition.id) {
           setCurrentClip(clipAtPosition);
         }
-        // Don't update if it's the same clip - prevents unnecessary re-renders
+      } else {
+        // No clip at this position (gap) - clear current clip but keep playhead moving
+        if (currentClip) {
+          setCurrentClip(null);
+        }
       }
     }
   };
@@ -298,50 +314,70 @@ function App() {
   useEffect(() => {
     if (!isPlaying) return;
     
+    // Calculate the end of the last clip (for looping)
+    const allClips = window.visibleClips || clips;
+    const maxEnd = allClips.length > 0 
+      ? Math.max(...allClips.map(clip => clip.position + (clip.trimEnd - clip.trimStart)))
+      : 0;
+    
     // Check if we have a video clip playing - if so, video drives playhead via handleTimeUpdate
     const clipAtPos = getClipAtPosition(playheadPosition);
     if (clipAtPos && clipAtPos.type === 'video') {
       // Video is playing - it will drive playhead via handleTimeUpdate
-      // Don't run this fallback timer
-      return;
+      // BUT: If playhead has moved past the end of current clip, we need timer fallback
+      const clipEnd = clipAtPos.position + (clipAtPos.trimEnd - clipAtPos.trimStart);
+      
+      if (playheadPosition >= clipEnd) {
+        // Playhead moved past clip end (video stopped at trimEnd, but playhead continued)
+        // Use timer to continue advancing through gap or to next clip
+        // Don't return - fall through to timer logic below
+      } else {
+        // Video is still within clip bounds - it drives playhead
+        // But still check for loop condition
+        if (playheadPosition >= maxEnd && maxEnd > 0) {
+          // Loop back to start
+          setPlayheadPosition(0);
+          playbackStateRef.current.position = 0;
+          playbackStateRef.current.timestamp = Date.now();
+          const startClip = getClipAtPosition(0);
+          setCurrentClip(startClip);
+        }
+        return;
+      }
     }
     
-    // Fallback: Use timer for audio-only clips or gaps
+    // Fallback: Use timer for audio-only clips or gaps - PLAYHEAD DRIVES CONTINUOUSLY
     playbackStateRef.current.position = playheadPosition;
     playbackStateRef.current.timestamp = Date.now();
     
     const updatePlayhead = () => {
       const elapsed = (Date.now() - playbackStateRef.current.timestamp) / 1000;
-      const newPos = playbackStateRef.current.position + elapsed;
+      let newPos = playbackStateRef.current.position + elapsed;
+      
+      // Loop check: if we've passed the end, loop back to start
+      if (maxEnd > 0 && newPos >= maxEnd) {
+        newPos = 0; // Loop to start
+        playbackStateRef.current.position = 0;
+        playbackStateRef.current.timestamp = Date.now();
+      } else {
+        playbackStateRef.current.position = newPos;
+      }
       
       setPlayheadPosition(newPos);
       
       // Find clip at new position (handles gaps - will return null between clips)
       const clipAtPosition = getClipAtPosition(newPos);
       
-      // Only update currentClip if we found one (handles gaps by not changing clip during gap)
+      // Update currentClip based on playhead position (handles gaps and transitions)
       if (clipAtPosition) {
         // Only change clip if it's different (prevents unnecessary reloads)
         if (!currentClip || currentClip.id !== clipAtPosition.id) {
           setCurrentClip(clipAtPosition);
         }
-      }
-      
-      // Check if we've reached the end of all clips (including gaps after last clip)
-      const allClips = window.visibleClips || clips;
-      if (allClips.length > 0) {
-        const maxEnd = Math.max(...allClips.map(clip => 
-          clip.position + (clip.trimEnd - clip.trimStart)
-        ));
-        if (newPos >= maxEnd) {
-          // LOOP: Reset to beginning instead of stopping
-          setPlayheadPosition(0);
-          playbackStateRef.current.position = 0;
-          playbackStateRef.current.timestamp = Date.now();
-          // Find clip at start position
-          const startClip = getClipAtPosition(0);
-          setCurrentClip(startClip);
-          return;
+      } else {
+        // No clip at this position (gap) - clear current clip but keep playhead moving
+        if (currentClip) {
+          setCurrentClip(null);
         }
       }
       
@@ -355,7 +391,7 @@ function App() {
         cancelAnimationFrame(playbackStateRef.current.animationId);
       }
     };
-  }, [isPlaying, playheadPosition]);
+  }, [isPlaying, clips]);
 
   const handlePlay = () => {
     // Find the clip at the current playhead position

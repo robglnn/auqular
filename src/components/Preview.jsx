@@ -6,6 +6,7 @@ function Preview({ clip, allClipsAtPosition = [], isPlaying, onPlay, onPause, pl
   const audioElementsRef = useRef({}); // Store multiple audio elements for simultaneous playback
   const containerRef = useRef(null);
   const lastClipIdRef = useRef(null);
+  const videoStopTimeRef = useRef(null); // Track when video stopped at trimEnd
   const isAudioOnly = clip?.type === 'audio';
 
   // Initialize audio element when it mounts
@@ -151,49 +152,82 @@ function Preview({ clip, allClipsAtPosition = [], isPlaying, onPlay, onPause, pl
     const clipPosition = clip.position;
 
     const updateTime = () => {
-      // During playback, video drives the playhead position
+      const currentVideoTime = video.currentTime;
+      
+      // During playback, video drives the playhead position CONTINUOUSLY
       if (isPlaying) {
-        // Calculate timeline position from video's currentTime
-        const offsetInClip = video.currentTime - clipTrimStart;
+        // Detect if video has reached trimEnd
+        const videoAtEnd = currentVideoTime >= clipTrimEnd - 0.05;
+        
+        if (videoAtEnd) {
+          // Video reached end - mark stop time and switch to timer-based advancement
+          if (!videoStopTimeRef.current) {
+            const clipEndPosition = clipPosition + (clipTrimEnd - clipTrimStart);
+            videoStopTimeRef.current = {
+              stopTime: Date.now(),
+              clipEndPosition
+            };
+          }
+          
+          // Calculate overshoot time since video stopped
+          const elapsedSinceStop = (Date.now() - videoStopTimeRef.current.stopTime) / 1000;
+          const timelinePosition = videoStopTimeRef.current.clipEndPosition + elapsedSinceStop;
+          
+          // Continue advancing playhead past clip end
+          if (onTimeUpdate) {
+            onTimeUpdate(timelinePosition);
+          }
+          return;
+        } else {
+          // Video is still advancing - clear stop time tracker
+          videoStopTimeRef.current = null;
+        }
+        
+        // Calculate timeline position from video's currentTime (normal playback)
+        const offsetInClip = currentVideoTime - clipTrimStart;
         const timelinePosition = clipPosition + offsetInClip;
         
-        // Update playhead to match video playback (this will sync timeline)
+        // Update playhead to match video playback
         if (onTimeUpdate) {
           onTimeUpdate(timelinePosition);
         }
       }
       
-      // Enforce trim boundaries - if video reaches trimEnd, transition to next clip
-      // Use >= with small tolerance to catch when we reach the end
-      const tolerance = 0.1; // 100ms tolerance for boundary detection
-      if (video.currentTime >= clipTrimEnd - tolerance) {
-        // At end of clip - transition to next if playing
-        if (isPlaying && onSeek) {
-          const clipEndPosition = clipPosition + (clipTrimEnd - clipTrimStart);
-          // Seek to end of current clip (will trigger App to find next clip or loop)
-          onSeek(clipEndPosition);
-          // Don't clamp currentTime - let the transition happen
-          return; // Exit early to avoid interfering with transition
-        } else {
-          // Not playing - just clamp to end
+      // Enforce trim boundaries only when NOT playing (manual seeking)
+      if (!isPlaying) {
+        videoStopTimeRef.current = null; // Clear stop tracker when paused
+        const tolerance = 0.05;
+        if (video.currentTime >= clipTrimEnd + tolerance) {
           video.currentTime = clipTrimEnd;
+        } else if (video.currentTime < clipTrimStart - tolerance) {
+          video.currentTime = clipTrimStart;
         }
-      } else if (video.currentTime < clipTrimStart - tolerance) {
-        video.currentTime = clipTrimStart;
       }
     };
 
     const handleEnded = () => {
-      // Video reached end of clip - transition to next clip if playing
-      console.log('Video clip ended at trim boundary');
-      if (isPlaying && onSeek) {
-        // Calculate clip end position
+      // Video reached end of clip - mark stop time so playhead continues advancing
+      console.log('Video clip ended at trim boundary - switching to timer-based advancement');
+      
+      if (isPlaying) {
+        // Mark that video stopped - updateTime will detect this and continue playhead
         const clipEndPosition = clipPosition + (clipTrimEnd - clipTrimStart);
-        // Seek to end of current clip (will trigger App to find next clip)
-        onSeek(clipEndPosition);
+        videoStopTimeRef.current = {
+          stopTime: Date.now(),
+          clipEndPosition
+        };
+        
+        // Keep video at trimEnd - playhead will continue via timer
+        const video = videoRef.current;
+        if (video) {
+          video.currentTime = clipTrimEnd;
+        }
       } else {
-        // Only pause if user stopped playback
-        if (onPause) onPause();
+        // User paused playback - allow pause
+        videoStopTimeRef.current = null;
+        if (onPause) {
+          onPause();
+        }
       }
     };
 

@@ -8,15 +8,19 @@
 ### Continuous Playback & Sequential Import ✅ COMPLETE! (Latest Session)
 - **Continuous clip transitions** - Video automatically transitions from one clip to the next during playback
 - **Automatic looping** - When reaching the end of the last clip, playhead loops back to `00:00:00` and continues playing
+- **Video stop detection** - When video reaches `trimEnd`, automatically switches to timer-based playhead advancement
+- **Seamless boundary transitions** - Playhead continues moving smoothly across clip boundaries without interruption
 - **Sequential clip positioning** - New imports automatically placed at the end of the most recent clip (no more stacking at 00:00:00)
 - **Helper function** - Added `getLastClipEndPosition()` to calculate end of timeline for sequential imports
 - **All import methods updated** - Button imports, drag-and-drop imports, and recordings all use sequential positioning
 - **Implementation**:
   - Removed `playheadPosition` from video source dependency array to prevent reload loops
   - Video element drives playhead when playing (prevents timer conflicts)
-  - Clip transitions trigger automatic seek to next clip or loop to start
+  - When video reaches `trimEnd`, `videoStopTimeRef` tracks stop time and switches to timer-based advancement
+  - Playhead continues advancing past clip end using elapsed time calculation
+  - When playhead enters next clip, that clip becomes active and starts playing
   - Trim boundary detection with tolerance prevents jitter at clip ends
-- **Result**: Smooth continuous playback across all clips, automatic looping, and intuitive sequential import workflow
+- **Result**: Smooth continuous playback across all clips without interruption, automatic looping, and intuitive sequential import workflow
 
 ### Screen Recording Desktop Source Detection ✅ COMPLETE! (Previous Session)
 - **Fixed "No desktop sources found" error** - Updated `fetchDesktopSources()` to request both `['screen', 'window']` types instead of just `['screen']`

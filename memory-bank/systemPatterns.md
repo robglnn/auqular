@@ -208,50 +208,89 @@ audioFilters.push(`${allAudioTracks.join('')}amix=inputs=${allAudioTracks.length
 ```
 **Why This Works**: Ensures exported videos include audio from recorded clips, maintains timeline positioning, mixes multiple audio sources correctly.
 
-### 6. Continuous Playback Pattern ✅ IMPLEMENTED
-**Need**: Play clips continuously, transitioning from one to the next, looping at end  
-**Pattern**: Video-driven playhead + automatic clip transitions + loop detection  
+### 6. Continuous Playback Pattern ✅ IMPLEMENTED (Enhanced)
+**Need**: Play clips continuously, transitioning from one to the next, looping at end without interruption  
+**Pattern**: Video-driven playhead + timer-based fallback + seamless boundary transitions  
 **Implementation**:
 ```javascript
+// Track when video stops at trimEnd
+const videoStopTimeRef = useRef(null);
+
 // Video element drives playhead when playing
-video.addEventListener('timeupdate', (e) => {
+video.addEventListener('timeupdate', () => {
   if (isPlaying) {
-    const timelinePosition = clipPosition + (video.currentTime - clipTrimStart);
-    onTimeUpdate(timelinePosition);
-  }
-  
-  // Detect end of clip and transition to next
-  if (video.currentTime >= clipTrimEnd - tolerance && isPlaying && onSeek) {
-    const clipEndPosition = clipPosition + (clipTrimEnd - clipTrimStart);
-    onSeek(clipEndPosition); // Triggers next clip or loop
+    const videoAtEnd = video.currentTime >= clipTrimEnd - 0.05;
+    
+    if (videoAtEnd) {
+      // Video reached end - switch to timer-based advancement
+      if (!videoStopTimeRef.current) {
+        const clipEndPosition = clipPosition + (clipTrimEnd - clipTrimStart);
+        videoStopTimeRef.current = {
+          stopTime: Date.now(),
+          clipEndPosition
+        };
+      }
+      
+      // Calculate overshoot time since video stopped
+      const elapsedSinceStop = (Date.now() - videoStopTimeRef.current.stopTime) / 1000;
+      const timelinePosition = videoStopTimeRef.current.clipEndPosition + elapsedSinceStop;
+      
+      // Continue advancing playhead past clip end
+      onTimeUpdate(timelinePosition);
+      return;
+    } else {
+      // Video still advancing - normal playback
+      videoStopTimeRef.current = null;
+      const timelinePosition = clipPosition + (video.currentTime - clipTrimStart);
+      onTimeUpdate(timelinePosition);
+    }
   }
 });
 
-// Seek handler finds next clip or loops to start
-const handleTimelineSeek = (time) => {
-  let targetClip = getClipAtPosition(time);
-  
-  // If no clip at position, find next clip
-  if (!targetClip && isPlaying) {
-    const nextClip = sortedClips.find(clip => clip.position > time);
-    if (nextClip) {
-      targetClip = nextClip;
-      targetTime = nextClip.position;
+// Handle video ended event
+video.addEventListener('ended', () => {
+  if (isPlaying) {
+    // Mark stop time - playhead continues via timer
+    const clipEndPosition = clipPosition + (clipTrimEnd - clipTrimStart);
+    videoStopTimeRef.current = {
+      stopTime: Date.now(),
+      clipEndPosition
+    };
+    video.currentTime = clipTrimEnd; // Keep at end
+  }
+});
+
+// App playhead advancement with fallback
+useEffect(() => {
+  const clipAtPos = getClipAtPosition(playheadPosition);
+  if (clipAtPos && clipAtPos.type === 'video') {
+    const clipEnd = clipAtPos.position + (clipAtPos.trimEnd - clipAtPos.trimStart);
+    
+    // If playhead moved past clip end, use timer fallback
+    if (playheadPosition >= clipEnd) {
+      // Fall through to timer logic
     } else {
-      // Loop back to start
-      targetClip = sortedClips[0];
-      targetTime = 0;
+      // Video drives playhead - return early
+      return;
     }
   }
   
-  // If at end of last clip, loop to start
-  if (time >= maxEnd && isPlaying) {
-    targetClip = sortedClips[0];
-    targetTime = 0;
-  }
-};
+  // Timer-based advancement for gaps and past-clip-end positions
+  const updatePlayhead = () => {
+    const elapsed = (Date.now() - playbackStateRef.current.timestamp) / 1000;
+    let newPos = playbackStateRef.current.position + elapsed;
+    
+    // Loop check
+    if (maxEnd > 0 && newPos >= maxEnd) {
+      newPos = 0;
+    }
+    
+    setPlayheadPosition(newPos);
+    // Find clip at new position - naturally transitions to next clip
+  };
+});
 ```
-**Why This Works**: Video element's natural playback drives timeline position, boundary detection triggers seamless transitions, loop detection provides continuous playback experience.
+**Why This Works**: Video element drives playhead during normal playback. When video reaches `trimEnd` and stops, timer-based advancement seamlessly takes over, allowing playhead to continue moving past clip boundaries. When playhead enters next clip, that clip becomes active and video resumes driving playhead. This creates uninterrupted continuous playback.
 
 ### 7. Sequential Import Positioning Pattern ✅ IMPLEMENTED
 **Need**: Import clips sequentially (each new clip after the last) instead of all at 00:00:00  

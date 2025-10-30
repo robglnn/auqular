@@ -74,6 +74,8 @@
 - ✅ **Continuous clip transitions** - Video automatically transitions from clip to clip during playback
 - ✅ **Automatic looping** - Loops back to 00:00:00 when reaching end of last clip
 - ✅ **Video-driven playhead** - Video element drives playhead advancement (prevents timer conflicts)
+- ✅ **Video stop detection** - When video reaches trimEnd, switches to timer-based advancement seamlessly
+- ✅ **Seamless boundary transitions** - Playhead continues moving smoothly across clip boundaries without interruption
 - ✅ **Sequential clip imports** - New clips automatically placed at end of most recent clip
 
 ### Export Functionality ✅ COMPLETE
