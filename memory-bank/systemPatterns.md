@@ -208,7 +208,74 @@ audioFilters.push(`${allAudioTracks.join('')}amix=inputs=${allAudioTracks.length
 ```
 **Why This Works**: Ensures exported videos include audio from recorded clips, maintains timeline positioning, mixes multiple audio sources correctly.
 
-### 6. Clip State Management (In Progress)
+### 6. Continuous Playback Pattern ✅ IMPLEMENTED
+**Need**: Play clips continuously, transitioning from one to the next, looping at end  
+**Pattern**: Video-driven playhead + automatic clip transitions + loop detection  
+**Implementation**:
+```javascript
+// Video element drives playhead when playing
+video.addEventListener('timeupdate', (e) => {
+  if (isPlaying) {
+    const timelinePosition = clipPosition + (video.currentTime - clipTrimStart);
+    onTimeUpdate(timelinePosition);
+  }
+  
+  // Detect end of clip and transition to next
+  if (video.currentTime >= clipTrimEnd - tolerance && isPlaying && onSeek) {
+    const clipEndPosition = clipPosition + (clipTrimEnd - clipTrimStart);
+    onSeek(clipEndPosition); // Triggers next clip or loop
+  }
+});
+
+// Seek handler finds next clip or loops to start
+const handleTimelineSeek = (time) => {
+  let targetClip = getClipAtPosition(time);
+  
+  // If no clip at position, find next clip
+  if (!targetClip && isPlaying) {
+    const nextClip = sortedClips.find(clip => clip.position > time);
+    if (nextClip) {
+      targetClip = nextClip;
+      targetTime = nextClip.position;
+    } else {
+      // Loop back to start
+      targetClip = sortedClips[0];
+      targetTime = 0;
+    }
+  }
+  
+  // If at end of last clip, loop to start
+  if (time >= maxEnd && isPlaying) {
+    targetClip = sortedClips[0];
+    targetTime = 0;
+  }
+};
+```
+**Why This Works**: Video element's natural playback drives timeline position, boundary detection triggers seamless transitions, loop detection provides continuous playback experience.
+
+### 7. Sequential Import Positioning Pattern ✅ IMPLEMENTED
+**Need**: Import clips sequentially (each new clip after the last) instead of all at 00:00:00  
+**Pattern**: Calculate end of last clip, place new clip at that position  
+**Implementation**:
+```javascript
+// Calculate end of timeline
+const getLastClipEndPosition = () => {
+  const visibleClips = window.visibleClips || clips;
+  if (visibleClips.length === 0) return 0;
+  
+  const maxEnd = Math.max(...visibleClips.map(clip => 
+    clip.position + (clip.trimEnd - clip.trimStart)
+  ));
+  
+  return maxEnd;
+};
+
+// Use for all imports
+const newPosition = clips.length === 0 ? playheadPosition : getLastClipEndPosition();
+```
+**Why This Works**: Provides intuitive workflow where clips line up end-to-end automatically, no manual positioning needed.
+
+### 8. Clip State Management (In Progress)
 **Pattern**: Single source of truth for clip data  
 **State Structure**:
 ```javascript

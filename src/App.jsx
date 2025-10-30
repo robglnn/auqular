@@ -101,7 +101,7 @@ function App() {
         endTime: duration,
         trimStart: 0,
         trimEnd: duration,
-        position: playheadPosition, // Place at current playhead
+        position: clips.length === 0 ? playheadPosition : getLastClipEndPosition(), // Place at end of last clip
         lane: 'video1', // Default to video lane
         type: 'video' // Explicit type
       };
@@ -134,13 +134,13 @@ function App() {
           filePath,
           duration,
           thumbnailPath: null, // No thumbnail for audio
-          trimStart: 0,
-          trimEnd: duration,
-          position: playheadPosition,
-          lane: targetLane.id,
-          type: 'audio',
-          label: fileName
-        };
+        trimStart: 0,
+        trimEnd: duration,
+        position: clips.length === 0 ? playheadPosition : getLastClipEndPosition(), // Place at end of last clip
+        lane: targetLane.id,
+        type: 'audio',
+        label: fileName
+      };
         
         setClips([...clips, newClip]);
       }
@@ -261,14 +261,52 @@ function App() {
     return clipsAtPos.length > 0 ? clipsAtPos[0] : null;
   };
 
-  const handleTimeUpdate = (clipTime) => {
-    // No need to handle time updates - the useEffect will handle playhead advancement
+  // Get the end position of the last clip (for sequential imports)
+  const getLastClipEndPosition = () => {
+    const visibleClips = window.visibleClips || clips;
+    if (visibleClips.length === 0) return 0;
+    
+    // Find the maximum end position of all clips
+    const maxEnd = Math.max(...visibleClips.map(clip => 
+      clip.position + (clip.trimEnd - clip.trimStart)
+    ));
+    
+    return maxEnd;
+  };
+
+  const handleTimeUpdate = (timelinePosition) => {
+    // Video is playing and driving the playhead - update it from video's currentTime
+    if (isPlaying) {
+      setPlayheadPosition(timelinePosition);
+      playbackStateRef.current.position = timelinePosition;
+      playbackStateRef.current.timestamp = Date.now();
+      
+      // Find clip at new position
+      // IMPORTANT: Only update currentClip if it's actually different to prevent reload loops
+      const clipAtPosition = getClipAtPosition(timelinePosition);
+      if (clipAtPosition) {
+        // Only update if clip ID changed OR if we don't have a current clip
+        if (!currentClip || currentClip.id !== clipAtPosition.id) {
+          setCurrentClip(clipAtPosition);
+        }
+        // Don't update if it's the same clip - prevents unnecessary re-renders
+      }
+    }
   };
 
   // Effect to continuously advance playhead when playing
   useEffect(() => {
     if (!isPlaying) return;
     
+    // Check if we have a video clip playing - if so, video drives playhead via handleTimeUpdate
+    const clipAtPos = getClipAtPosition(playheadPosition);
+    if (clipAtPos && clipAtPos.type === 'video') {
+      // Video is playing - it will drive playhead via handleTimeUpdate
+      // Don't run this fallback timer
+      return;
+    }
+    
+    // Fallback: Use timer for audio-only clips or gaps
     playbackStateRef.current.position = playheadPosition;
     playbackStateRef.current.timestamp = Date.now();
     
@@ -287,10 +325,6 @@ function App() {
         if (!currentClip || currentClip.id !== clipAtPosition.id) {
           setCurrentClip(clipAtPosition);
         }
-      } else {
-        // No clip at this position - we're in a gap
-        // Keep current clip playing until it naturally ends, then it will transition
-        // Don't set currentClip to null here - let it finish naturally
       }
       
       // Check if we've reached the end of all clips (including gaps after last clip)
@@ -341,11 +375,55 @@ function App() {
   };
 
   const handleTimelineSeek = (time) => {
-    setPlayheadPosition(time);
-    // Find and set the clip at this position
-    const clipAtPosition = getClipAtPosition(time);
-    if (clipAtPosition) {
-      setCurrentClip(clipAtPosition);
+    const allClips = window.visibleClips || clips;
+    
+    // Find the clip that contains this time, or the next clip after this time
+    let targetClip = getClipAtPosition(time);
+    let targetTime = time;
+    
+    // If no clip at this position, find the next clip
+    if (!targetClip && allClips.length > 0) {
+      // Sort clips by position
+      const sortedClips = [...allClips].sort((a, b) => a.position - b.position);
+      
+      // Find next clip after this time
+      const nextClip = sortedClips.find(clip => clip.position > time);
+      
+      if (nextClip) {
+        targetClip = nextClip;
+        targetTime = nextClip.position; // Start at beginning of next clip
+      } else {
+        // No next clip - loop back to start (00:00:00) if playing
+        if (isPlaying) {
+          const firstClip = sortedClips[0];
+          if (firstClip) {
+            targetClip = firstClip;
+            targetTime = 0;
+          }
+        }
+      }
+    }
+    
+    // If we're at the end of the last clip and playing, loop back to start
+    if (isPlaying && allClips.length > 0) {
+      const maxEnd = Math.max(...allClips.map(clip => 
+        clip.position + (clip.trimEnd - clip.trimStart)
+      ));
+      
+      if (time >= maxEnd) {
+        // Loop back to start and continue playing
+        const sortedClips = [...allClips].sort((a, b) => a.position - b.position);
+        const firstClip = sortedClips[0];
+        if (firstClip) {
+          targetClip = firstClip;
+          targetTime = 0;
+        }
+      }
+    }
+    
+    setPlayheadPosition(targetTime);
+    if (targetClip) {
+      setCurrentClip(targetClip);
     }
   };
 
@@ -486,6 +564,10 @@ function App() {
         console.warn('Could not get file size:', e);
       }
       
+      // Calculate position: place at end of last clip, or at playhead if no clips exist
+      const lastClipEnd = getLastClipEndPosition();
+      const newPosition = clips.length === 0 ? playheadPosition : lastClipEnd;
+      
       const newClip = {
         id: Date.now(),
         filePath,
@@ -496,7 +578,7 @@ function App() {
         fileSize,
         trimStart: 0,
         trimEnd: duration,
-        position: playheadPosition,
+        position: newPosition,
         lane: 'video1',
         type: 'video'
       };
@@ -536,7 +618,7 @@ function App() {
         fileSize,
         trimStart: 0,
         trimEnd: duration,
-        position: playheadPosition,
+        position: clips.length === 0 ? playheadPosition : getLastClipEndPosition(), // Place at end of last clip
         lane: targetLane.id,
         type: 'audio',
         label: fileName
@@ -589,7 +671,7 @@ function App() {
           fileSize,
           trimStart: 0,
           trimEnd: duration,
-          position: 0,
+          position: clips.length === 0 ? 0 : getLastClipEndPosition(), // Place at end of last clip
           lane: 'video1',
           type: 'video'
         });

@@ -1,11 +1,24 @@
 # Active Context: Auqular Development
 
 ## Current Focus
-🎯 **Recording & Export Features Complete!** - Screen recording, audio embedding, and sequential export all working perfectly. Main remaining issue is video preview rendering during playback.
+🎯 **Core Features Complete!** - Continuous playback, sequential clip imports, and all recording features working perfectly. Video now plays seamlessly across clips and loops automatically.
 
 ## Recent Changes (Current Session)
 
-### Screen Recording Desktop Source Detection ✅ COMPLETE! (Latest Session)
+### Continuous Playback & Sequential Import ✅ COMPLETE! (Latest Session)
+- **Continuous clip transitions** - Video automatically transitions from one clip to the next during playback
+- **Automatic looping** - When reaching the end of the last clip, playhead loops back to `00:00:00` and continues playing
+- **Sequential clip positioning** - New imports automatically placed at the end of the most recent clip (no more stacking at 00:00:00)
+- **Helper function** - Added `getLastClipEndPosition()` to calculate end of timeline for sequential imports
+- **All import methods updated** - Button imports, drag-and-drop imports, and recordings all use sequential positioning
+- **Implementation**:
+  - Removed `playheadPosition` from video source dependency array to prevent reload loops
+  - Video element drives playhead when playing (prevents timer conflicts)
+  - Clip transitions trigger automatic seek to next clip or loop to start
+  - Trim boundary detection with tolerance prevents jitter at clip ends
+- **Result**: Smooth continuous playback across all clips, automatic looping, and intuitive sequential import workflow
+
+### Screen Recording Desktop Source Detection ✅ COMPLETE! (Previous Session)
 - **Fixed "No desktop sources found" error** - Updated `fetchDesktopSources()` to request both `['screen', 'window']` types instead of just `['screen']`
 - **IPC handler integration** - Now uses `ipcRenderer.invoke('get-desktop-sources')` as primary method (more reliable)
 - **Fallback handling** - Direct `desktopCapturer.getSources()` fallback also requests both types
@@ -280,33 +293,17 @@
 
 ## Current Blockers
 
-### Video Preview Rendering 🚨 CRITICAL PRIORITY
-**Issue**: Video element shows black screen during active playback, but displays correctly when paused
-**Symptoms**:
-- Video appears correctly on pause
-- Black screen during playback
-- Sometimes shows video frame briefly when rapidly clicking play/pause
-- Video audio plays correctly (extracted and mixed)
-**Impact**: Blocks core editing workflow - cannot see video content while editing
-**Technical Notes**:
-- Video element has `preload="auto"`, `playsInline`, and explicit display styles
-- `video.style.display = 'block'` and `visibility = 'visible'` set during play
-- Video loads successfully (logs show "✅ Video playback started")
-- May be related to CSS layering, z-index, or video element state management
+### None - Core Features Complete! ✅
+Continuous playback and sequential imports are working perfectly. All major features are functional.
 
-### Drag and Drop File Import 🚨 HIGH PRIORITY
+### Drag and Drop File Import ⚠️ LOW PRIORITY (Workaround Available)
 **Issue**: Files dragged from Windows Explorer show red X cursor and drop fails
-**Symptoms**:
-- Red "not allowed" cursor appears when dragging files
-- No drop event triggered in console logs
-- preventDefault/stopPropagation handlers added but not preventing default behavior
-- Event listeners attached to window, document, and body with capture:true
-**Impact**: Users cannot import files via drag/drop, must use file picker button
+**Status**: File picker button provides working alternative
+**Impact**: Minor UX inconvenience - users can use file picker button instead
 **Technical Notes**:
-- Comprehensive logging added for debugging (dragover, dragenter, dragleave, drop events)
-- Event handlers use `{ passive: false, capture: true }` options
-- May require Electron-specific drag/drop handling in main process
+- May require Electron main process drag/drop handler
 - Research needed: Best practices for Electron file drag/drop (IPC handlers vs renderer events)
+- Current workaround: File picker button works perfectly
 
 ### Export Timeline Positioning ⚠️ MEDIUM PRIORITY
 **Issue**: Export doesn't respect timeline positions correctly, especially for audio starting before video

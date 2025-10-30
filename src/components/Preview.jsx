@@ -137,27 +137,64 @@ function Preview({ clip, allClipsAtPosition = [], isPlaying, onPlay, onPause, pl
     };
   }, [allClipsAtPosition, isPlaying, playheadPosition, clip, isAudioOnly]);
 
-  // Handle video time updates - enforce trim boundaries for split clips
+  // Handle video time updates - drive playhead during playback, enforce trim boundaries
+  // Use clip.id instead of clip object to prevent re-attaching listeners on every render
   useEffect(() => {
     if (isAudioOnly) return;
     const video = videoRef.current;
     if (!video || !clip) return;
 
+    // Store clip values in closure to avoid stale closures
+    const clipId = clip.id;
+    const clipTrimStart = clip.trimStart;
+    const clipTrimEnd = clip.trimEnd;
+    const clipPosition = clip.position;
+
     const updateTime = () => {
-      // Enforce trim boundaries - if video tries to play beyond trimEnd, stop/pause
-      if (video.currentTime > clip.trimEnd) {
-        video.currentTime = clip.trimEnd;
-        video.pause();
-      } else if (video.currentTime < clip.trimStart) {
-        video.currentTime = clip.trimStart;
+      // During playback, video drives the playhead position
+      if (isPlaying) {
+        // Calculate timeline position from video's currentTime
+        const offsetInClip = video.currentTime - clipTrimStart;
+        const timelinePosition = clipPosition + offsetInClip;
+        
+        // Update playhead to match video playback (this will sync timeline)
+        if (onTimeUpdate) {
+          onTimeUpdate(timelinePosition);
+        }
       }
-      onTimeUpdate(video.currentTime);
+      
+      // Enforce trim boundaries - if video reaches trimEnd, transition to next clip
+      // Use >= with small tolerance to catch when we reach the end
+      const tolerance = 0.1; // 100ms tolerance for boundary detection
+      if (video.currentTime >= clipTrimEnd - tolerance) {
+        // At end of clip - transition to next if playing
+        if (isPlaying && onSeek) {
+          const clipEndPosition = clipPosition + (clipTrimEnd - clipTrimStart);
+          // Seek to end of current clip (will trigger App to find next clip or loop)
+          onSeek(clipEndPosition);
+          // Don't clamp currentTime - let the transition happen
+          return; // Exit early to avoid interfering with transition
+        } else {
+          // Not playing - just clamp to end
+          video.currentTime = clipTrimEnd;
+        }
+      } else if (video.currentTime < clipTrimStart - tolerance) {
+        video.currentTime = clipTrimStart;
+      }
     };
 
     const handleEnded = () => {
-      // Video ended - App's updatePlayhead will detect and transition to next clip
-      // Don't pause here - let App handle the transition
+      // Video reached end of clip - transition to next clip if playing
       console.log('Video clip ended at trim boundary');
+      if (isPlaying && onSeek) {
+        // Calculate clip end position
+        const clipEndPosition = clipPosition + (clipTrimEnd - clipTrimStart);
+        // Seek to end of current clip (will trigger App to find next clip)
+        onSeek(clipEndPosition);
+      } else {
+        // Only pause if user stopped playback
+        if (onPause) onPause();
+      }
     };
 
     video.addEventListener('timeupdate', updateTime);
@@ -167,7 +204,7 @@ function Preview({ clip, allClipsAtPosition = [], isPlaying, onPlay, onPause, pl
       video.removeEventListener('timeupdate', updateTime);
       video.removeEventListener('ended', handleEnded);
     };
-  }, [onTimeUpdate, isAudioOnly, clip]);
+  }, [onTimeUpdate, onPause, isAudioOnly, clip?.id, clip?.trimStart, clip?.trimEnd, clip?.position, isPlaying]);
 
   // Handle audio time updates - enforce trim boundaries for split clips
   useEffect(() => {
@@ -306,6 +343,7 @@ function Preview({ clip, allClipsAtPosition = [], isPlaying, onPlay, onPause, pl
   }, [isPlaying, isAudioOnly]);
 
   // Handle video source changes - reload when clip or trim changes (for split clips)
+  // NOTE: playheadPosition removed from deps - it was causing constant reloads during playback
   useEffect(() => {
     if (isAudioOnly) return;
     const video = videoRef.current;
@@ -318,19 +356,35 @@ function Preview({ clip, allClipsAtPosition = [], isPlaying, onPlay, onPause, pl
     const currentClipKey = video.dataset?.clipKey;
     
     if (video.src !== filePath || currentClipKey !== clipKey) {
+      // Store current playback state before reload
+      const wasPlaying = !video.paused;
+      const currentTimeBeforeReload = video.currentTime;
+      
       if (!video.dataset) video.dataset = {};
       video.dataset.clipKey = clipKey;
       
       video.src = filePath;
       video.preload = 'auto';
       video.load();
+      
       video.addEventListener('loadedmetadata', () => {
-        const offsetInClip = playheadPosition - clip.position + clip.trimStart;
-        video.currentTime = Math.max(clip.trimStart, Math.min(offsetInClip, clip.trimEnd));
-        console.log('✅ Video preloaded - duration:', video.duration, 'currentTime:', video.currentTime);
+        // Only set initial time if paused (don't interfere with playback)
+        if (!isPlaying && !wasPlaying) {
+          const offsetInClip = playheadPosition - clip.position + clip.trimStart;
+          const targetTime = Math.max(clip.trimStart, Math.min(offsetInClip, clip.trimEnd));
+          video.currentTime = targetTime;
+        } else if (wasPlaying && isPlaying) {
+          // If we were playing, try to restore playback position
+          const offsetInClip = playheadPosition - clip.position + clip.trimStart;
+          const targetTime = Math.max(clip.trimStart, Math.min(offsetInClip, clip.trimEnd));
+          video.currentTime = targetTime;
+          // Resume playback if it was playing
+          video.play().catch(err => console.warn('Resume playback failed:', err));
+        }
+        console.log('✅ Video preloaded - duration:', video.duration, 'currentTime:', video.currentTime, 'wasPlaying:', wasPlaying);
       }, { once: true });
     }
-  }, [clip?.id, clip?.trimStart, clip?.trimEnd, isAudioOnly, playheadPosition]);
+  }, [clip?.id, clip?.trimStart, clip?.trimEnd, isAudioOnly]);
 
   // Handle audio source changes - PRELOAD IMMEDIATELY when clip is set (CRITICAL FIX)
   useEffect(() => {
@@ -413,11 +467,28 @@ function Preview({ clip, allClipsAtPosition = [], isPlaying, onPlay, onPause, pl
     }
   }, [clip?.id, clip?.trimStart, clip?.trimEnd, isAudioOnly]); // Depend on trim points so split clips reload
 
-  // Sync video currentTime with playhead position (when seeking)
+  // Sync video currentTime with playhead position (only when paused or seeking)
   useEffect(() => {
     if (isAudioOnly) return;
     const video = videoRef.current;
     if (!video || !clip) return;
+    
+    // When playing, video drives playhead - don't sync playhead -> video
+    // Only sync when paused or when clip changes
+    if (isPlaying) {
+      // But if clip changed while playing, we need to sync to start of new clip
+      if (lastClipIdRef.current !== clip.id) {
+        const offsetInClip = playheadPosition - clip.position + clip.trimStart;
+        const targetTime = Math.max(clip.trimStart, Math.min(offsetInClip, clip.trimEnd));
+        video.currentTime = targetTime;
+        lastClipIdRef.current = clip.id;
+        // Resume playback if it was playing
+        if (video.paused && video.readyState >= 2) {
+          video.play().catch(err => console.warn('Resume playback after clip change failed:', err));
+        }
+      }
+      return;
+    }
     
     if (lastClipIdRef.current === clip.id) {
       lastClipIdRef.current = null;
@@ -431,7 +502,7 @@ function Preview({ clip, allClipsAtPosition = [], isPlaying, onPlay, onPause, pl
     if (Math.abs(video.currentTime - targetTime) > tolerance) {
       video.currentTime = targetTime;
     }
-  }, [playheadPosition, clip, isAudioOnly]);
+  }, [playheadPosition, clip, isAudioOnly, isPlaying]);
 
   // Sync audio currentTime with playhead position (when seeking)
   useEffect(() => {
@@ -456,12 +527,15 @@ function Preview({ clip, allClipsAtPosition = [], isPlaying, onPlay, onPause, pl
     }
   }, [playheadPosition, clip, isAudioOnly, isPlaying]);
 
-  // Track when clip changes
+  // Track when clip changes - mark that we've handled this clip transition
   useEffect(() => {
     if (clip) {
-      lastClipIdRef.current = clip.id;
+      // Only mark if clip ID actually changed (not just on every render)
+      if (lastClipIdRef.current !== clip.id) {
+        lastClipIdRef.current = clip.id;
+      }
     }
-  }, [clip]);
+  }, [clip?.id]);
 
   const handleVideoClick = (event) => {
     if (videoRef.current) {
