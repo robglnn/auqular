@@ -152,8 +152,10 @@
 **Multi-Lane Timeline**: ✅ Working (Final Cut Pro-style with thumbnails)  
 **Sequential Playback**: ✅ Working (seamless clip transitions + looping)  
 **Multi-Track Audio**: ✅ Working (simultaneous overlapping audio playback)  
+**UI Polish**: ✅ Consistent button styling + Custom branding icons  
+**EXE Size**: ✅ Optimized from ~2GB to ~200-300MB  
 **Testing**: ⚠️ Core features functional but critical video rendering issue blocks workflow  
-**Packaging**: ✅ Windows EXE built (with FFmpeg binaries properly packaged)  
+**Packaging**: ✅ Windows EXE built (with FFmpeg binaries properly packaged + optimized size)  
 **Next Focus**: 🚨 **CRITICAL**: Fix video preview rendering during playback
 
 ## Known Issues 🐛

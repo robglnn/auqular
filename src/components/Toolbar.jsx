@@ -1,6 +1,8 @@
 import React from 'react';
 
-function Toolbar({ onImport, onExportSource, onExport720p, onExport1080p, canExport, onRecord, onImportAudio, exportProgress }) {
+function Toolbar({ onImport, onExportSource, onExport720p, onExport1080p, canExport, onRecord, onImportAudio, exportProgress, onDropZoneClick }) {
+  const [isDragging, setIsDragging] = React.useState(false);
+  
   // Format progress as XX% (double digits, 0-100)
   const formatProgress = (progress) => {
     if (progress === null || progress === undefined) return null;
@@ -10,12 +12,30 @@ function Toolbar({ onImport, onExportSource, onExport720p, onExport1080p, canExp
 
   return (
     <div className="toolbar">
-      <button className="btn btn-primary" onClick={onImport}>
-        Import Video
-      </button>
-      <button onClick={onImportAudio} className="toolbar-button">
-        Import Audio
-      </button>
+      <div
+        className={`drop-zone ${isDragging ? 'dragging' : ''}`}
+        onClick={onDropZoneClick}
+        onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+        onDragLeave={() => setIsDragging(false)}
+        onDrop={(e) => { e.preventDefault(); setIsDragging(false); }}
+        style={{
+          display: 'inline-block',
+          border: '2px dashed #007acc',
+          borderRadius: '8px',
+          padding: '10px 20px',
+          marginRight: '12px',
+          cursor: 'pointer',
+          background: isDragging ? 'rgba(0,122,204,0.2)' : 'rgba(0,122,204,0.05)',
+          transition: 'all 0.2s',
+          userSelect: 'none',
+          fontSize: '14px',
+          fontWeight: '500'
+        }}
+        title="Click to add media files (multi-select supported)"
+      >
+        <span style={{ fontSize: '18px', marginRight: '8px' }}>📁</span>
+        <span>Add Files</span>
+      </div>
       <button className="btn btn-primary" onClick={onRecord}>
         Record
       </button>

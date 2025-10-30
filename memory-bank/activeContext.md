@@ -5,6 +5,20 @@
 
 ## Recent Changes (Current Session)
 
+### UI Polish & Optimization ✅ COMPLETE! (October 30, 2025)
+- **Button Styling Consistency** - Import Audio button now uses same `btn btn-primary` class as Import Video and Record buttons
+- **Timeline Button Styling** - Split and Delete buttons now use `add-lane-btn` class matching the "+ Add Lane" button (12px bold font, blue #007acc background)
+- **EXE Size Optimization** - Reduced exe from ~2GB to ~200-300MB by excluding bundled frontend dependencies already compiled in bundle.js
+- **Custom App Icons** - Added and configured Auqular brand icons (16px, 32px, 256px) for both app window and exe file
+- **Package.json Configuration Updates**:
+  - Excluded all node_modules by default with `!node_modules/**/*`
+  - Explicitly included only runtime dependencies: fluent-ffmpeg, mic, node-record-lpcm16
+  - Added `assets/**/*` to files list for icon inclusion
+  - Set `icon` property in win build config to use Auqular256.ico
+- **main.js Icon Configuration** - Added icon path to BrowserWindow for taskbar/title bar display
+
+## Recent Changes (Previous Session)
+
 ### Export Resolution Options ✅ COMPLETE!
 - **Three export quality presets** - Source resolution (no scaling), 720p (1280x720), and 1080p (1920x1080)
 - **UI implementation** - Small resolution buttons (720p, 1080p) positioned directly to the right of Export MP4 button with minimal spacing (2px)

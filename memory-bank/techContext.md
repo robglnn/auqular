@@ -42,6 +42,17 @@ npm start        # Launch Electron app
 npm run dist     # Build Windows EXE with electron-builder
 ```
 
+### Package Size Optimization
+**Strategy**: Exclude pre-bundled dependencies from electron-builder package
+- Webpack already bundles React, Konva, and all frontend libraries into `bundle.js`
+- electron-builder configuration excludes all `node_modules` by default
+- Only runtime-required dependencies explicitly included:
+  - `fluent-ffmpeg` - FFmpeg command wrapper
+  - `mic` / `node-record-lpcm16` - Native audio recording binaries
+- **Result**: Reduced exe size from ~2GB to ~200-300MB (85-90% reduction)
+- FFmpeg/FFprobe binaries copied separately via `extraResources`
+- Assets folder (icons) included via files list
+
 ### IPC Communication
 Renderer → Main (via ipcRenderer.invoke):
 - `openVideoFile()` - Open file picker
@@ -159,16 +170,36 @@ if (app.isPackaged) {
 **Issue**: FFmpeg binaries not included in packaged EXE  
 **Solution**: Updated package.json build configuration to use `extraResources`:
 ```json
-"extraResources": [
-  {
-    "from": "node_modules/ffmpeg-static/ffmpeg.exe",
-    "to": "ffmpeg.exe"
+"build": {
+  "win": {
+    "icon": "assets/icons/Auqular256.ico"
   },
-  {
-    "from": "node_modules/ffprobe-static/bin/win32/x64/ffprobe.exe",
-    "to": "ffprobe.exe"
-  }
-]
+  "files": [
+    "dist/**/*",
+    "main.js",
+    "preload.js",
+    "package.json",
+    "assets/**/*",
+    "!node_modules/**/*",
+    "node_modules/fluent-ffmpeg/**/*",
+    "node_modules/mic/**/*",
+    "node_modules/node-record-lpcm16/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "node_modules/ffmpeg-static/ffmpeg.exe",
+      "to": "ffmpeg.exe"
+    },
+    {
+      "from": "node_modules/ffprobe-static/bin/win32/x64/ffprobe.exe",
+      "to": "ffprobe.exe"
+    },
+    {
+      "from": "bin/sox/",
+      "to": "sox/"
+    }
+  ]
+}
 ```
 
 ### React Import Errors (RESOLVED)

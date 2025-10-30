@@ -403,95 +403,31 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [currentClip, playheadPosition, isPlaying, clips]);
 
-  // Handle drag and drop files - CRITICAL: Must preventDefault to avoid red X
+  // Listen for file drops from main process (main process intercepts OS-level drops)
   useEffect(() => {
-    const handleDragOver = (e) => {
-      console.log('🔄 dragover event:', {
-        target: e.target?.tagName,
-        currentTarget: e.currentTarget?.tagName,
-        defaultPrevented: e.defaultPrevented,
-        dataTransfer: e.dataTransfer ? {
-          types: Array.from(e.dataTransfer.types || []),
-          effectAllowed: e.dataTransfer.effectAllowed,
-          dropEffect: e.dataTransfer.dropEffect
-        } : null
-      });
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-      if (e.dataTransfer) {
-        e.dataTransfer.dropEffect = 'copy';
-        e.dataTransfer.effectAllowed = 'copy';
-      }
-      return false;
-    };
-    
-    const handleDragEnter = (e) => {
-      console.log('📥 dragenter event:', {
-        target: e.target?.tagName,
-        currentTarget: e.currentTarget?.tagName,
-        defaultPrevented: e.defaultPrevented
-      });
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-      if (e.dataTransfer) {
-        e.dataTransfer.dropEffect = 'copy';
-      }
-      return false;
-    };
-    
-    const handleDragLeave = (e) => {
-      console.log('📤 dragleave event');
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    };
-    
-    const handleDrop = async (e) => {
-      console.log('🎯 DROP EVENT TRIGGERED:', {
-        target: e.target?.tagName,
-        currentTarget: e.currentTarget?.tagName,
-        defaultPrevented: e.defaultPrevented,
-        dataTransfer: e.dataTransfer ? {
-          types: Array.from(e.dataTransfer.types || []),
-          files: e.dataTransfer.files?.length || 0,
-          items: e.dataTransfer.items?.length || 0
-        } : null
-      });
+    let ipcRenderer;
+    try {
+      ipcRenderer = window.require ? window.require('electron').ipcRenderer : null;
+    } catch (e) {
+      console.warn('IPC not available for file drop handling');
+      return;
+    }
+
+    if (!ipcRenderer) {
+      console.warn('No IPC renderer available');
+      return;
+    }
+
+    const handleFileDrop = async (event, droppedFiles) => {
+      console.log('📥 Files dropped from main process:', droppedFiles);
       
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-      
-      const files = Array.from(e.dataTransfer?.files || []);
-      console.log('📁 Files from drop:', files.length, files.map(f => ({
-        name: f.name,
-        path: f.path,
-        type: f.type,
-        size: f.size
-      })));
-      
-      if (files.length === 0) {
-        console.warn('⚠️ No files in drop event - checking dataTransfer.items');
-        // Try items as fallback
-        if (e.dataTransfer?.items) {
-          const items = Array.from(e.dataTransfer.items);
-          console.log('📋 DataTransfer items:', items.map(item => ({
-            kind: item.kind,
-            type: item.type
-          })));
-        }
-        return;
-      }
-      
-      for (const file of files) {
-        // Electron provides file.path
-        const filePath = file.path || (file.name ? file.name : null);
-        console.log('📄 Processing file:', { name: file.name, path: filePath, type: file.type });
+      for (const fileData of droppedFiles) {
+        const { path: filePath, name, type } = fileData;
+        
+        console.log('📄 Processing dropped file:', { name, path: filePath, type });
         
         if (!filePath) {
-          console.warn('❌ File path not available, skipping:', file.name);
+          console.warn('❌ No file path provided for:', name);
           continue;
         }
         
@@ -505,32 +441,20 @@ function App() {
           console.log('✅ Importing as audio:', filePath);
           await handleImportAudioFile(filePath);
         } else {
-          console.warn('⚠️ Unknown file type:', ext);
+          console.warn('⚠️ Unsupported file type:', ext, 'for file:', name);
+          alert(`Unsupported file type: ${ext}\n\nSupported formats:\nVideo: MP4, MOV, AVI, MKV, WebM\nAudio: WAV, MP3, AAC, OGG`);
         }
       }
-      
-      return false;
     };
-    
-    // Add to window AND document AND body for maximum coverage
-    const targets = [window, document, document.body].filter(Boolean);
-    
-    targets.forEach(target => {
-      target.addEventListener('dragover', handleDragOver, { passive: false, capture: true });
-      target.addEventListener('dragenter', handleDragEnter, { passive: false, capture: true });
-      target.addEventListener('dragleave', handleDragLeave, { passive: false, capture: true });
-      target.addEventListener('drop', handleDrop, { passive: false, capture: true });
-    });
+
+    console.log('🎯 Setting up IPC listener for file-dropped events');
+    ipcRenderer.on('file-dropped', handleFileDrop);
     
     return () => {
-      targets.forEach(target => {
-        target.removeEventListener('dragover', handleDragOver, { capture: true });
-        target.removeEventListener('dragenter', handleDragEnter, { capture: true });
-        target.removeEventListener('dragleave', handleDragLeave, { capture: true });
-        target.removeEventListener('drop', handleDrop, { capture: true });
-      });
+      console.log('🧹 Cleaning up IPC listener for file-dropped events');
+      ipcRenderer.removeListener('file-dropped', handleFileDrop);
     };
-  }, [playheadPosition, lanes, clips, handleImportVideoFile, handleImportAudioFile]);
+  }, [handleImportVideoFile, handleImportAudioFile]);
 
   // Helper to import video file by path
   const handleImportVideoFile = async (filePath) => {
@@ -634,6 +558,31 @@ function App() {
     }
   };
 
+  // HOMERUN FIX: File picker (Windows UIPI blocks drag/drop)
+  const handleDropZoneClick = async () => {
+    try {
+      const { ipcRenderer } = window.require('electron');
+      const filePaths = await ipcRenderer.invoke('open-file-dialog');
+      
+      console.log('📁 Files selected via picker:', filePaths);
+      
+      for (const filePath of filePaths) {
+        const ext = filePath.toLowerCase().split('.').pop();
+        
+        if (['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext)) {
+          console.log('✅ Importing video:', filePath);
+          await handleImportVideoFile(filePath);
+        } else if (['wav', 'mp3', 'aac', 'ogg'].includes(ext)) {
+          console.log('✅ Importing audio:', filePath);
+          await handleImportAudioFile(filePath);
+        }
+      }
+    } catch (err) {
+      console.error('Error opening file dialog:', err);
+      alert('Failed to open file picker: ' + err.message);
+    }
+  };
+
   return (
     <div className="app">
       <Toolbar
@@ -644,6 +593,7 @@ function App() {
         onExport1080p={handleExport1080p}
         canExport={clips.length > 0}
         exportProgress={exportProgress}
+        onDropZoneClick={handleDropZoneClick}
         onRecord={() => {
           // CRITICAL: Stop playback before showing recording panel (releases camera/mic on Windows)
           if (isPlaying) {

@@ -7,7 +7,8 @@
     "start": "electron .",
     "dev": "webpack --mode development && electron .",
     "build": "webpack --mode production",
-    "dist": "webpack --mode production && electron-builder",
+    "clean": "if exist dist rmdir /s /q dist",
+    "dist": "npm run clean && webpack --mode production && electron-builder",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -23,19 +24,26 @@
     "productName": "Auqular",
     "win": {
       "target": [
-        "portable"
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
       ],
-      "signAndEditExecutable": false
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "icon": "assets/icons/Augular256.ico",
+      "signAndEditExecutable": false,
+      "compression": "normal"
     },
     "files": [
       "dist/**/*",
       "main.js",
       "preload.js",
-      "package.json"
+      "package.json",
+      "assets/**/*",
+      "!node_modules/**/*",
+      "node_modules/fluent-ffmpeg/**/*",
+      "node_modules/which/**/*",
+      "node_modules/mic/**/*",
+      "node_modules/node-record-lpcm16/**/*"
     ],
     "extraResources": [
       {

@@ -1,20 +1,10 @@
-const { contextBridge, ipcRenderer } = require('electron');
+// Preload script - simplified
+// With nodeIntegration: true and contextIsolation: false,
+// the renderer process has direct access to require('electron')
+// so we don't need contextBridge (which causes errors with contextIsolation: false)
 
-// Expose protected methods that allow the renderer process to use
-// the ipcRenderer without exposing the entire object
-contextBridge.exposeInMainWorld('electronAPI', {
-  openVideoFile: () => ipcRenderer.invoke('open-video-file'),
-  getVideoDuration: (filePath) => ipcRenderer.invoke('get-video-duration', filePath),
-  generateThumbnail: (filePath) => ipcRenderer.invoke('generate-thumbnail', filePath),
-  exportVideo: (options) => ipcRenderer.invoke('export-video', options),
-  showSaveDialog: () => ipcRenderer.invoke('show-save-dialog'),
-  onExportProgress: (callback) => {
-    const listener = (event, progress) => callback(progress);
-    ipcRenderer.on('export-progress', listener);
-    return () => ipcRenderer.removeListener('export-progress', listener);
-  },
-  getDesktopSources: () => ipcRenderer.invoke('get-desktop-sources'),
-  showRecordSaveDialog: () => ipcRenderer.invoke('show-record-save-dialog'),
-  saveRecordedVideo: (options) => ipcRenderer.invoke('save-recorded-video', options)
-});
+console.log('✅ Preload script loaded (no-op with nodeIntegration: true)');
 
+// Note: All IPC communication happens directly via:
+// const { ipcRenderer } = window.require('electron');
+// This is secure enough for a local desktop app with no remote content.

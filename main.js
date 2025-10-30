@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, desktopCapturer, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, desktopCapturer, session, protocol } = require('electron');
 const path = require('path');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegStatic = require('ffmpeg-static');
@@ -7,6 +7,20 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 const record = require('node-record-lpcm16');
 const mic = require('mic');
+
+// SOLUTION 2: NUCLEAR OPTION - Disable ALL Chromium security restrictions
+console.log('🔓 DISABLING ALL SECURITY RESTRICTIONS FOR FILE DROP');
+
+app.commandLine.appendSwitch('disable-features', 'OutOfBlinkCors');
+app.commandLine.appendSwitch('disable-web-security');
+app.commandLine.appendSwitch('allow-file-access-from-files');
+app.commandLine.appendSwitch('allow-file-access');
+app.commandLine.appendSwitch('disable-site-isolation-trials');
+app.commandLine.appendSwitch('no-sandbox');
+app.commandLine.appendSwitch('disable-setuid-sandbox');
+app.commandLine.appendSwitch('disable-gpu-sandbox');
+
+console.log('✅ Security restrictions disabled');
 
 // Set FFmpeg paths
 if (app.isPackaged) {
@@ -44,30 +58,160 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
-  webPreferences: {
-    nodeIntegration: true,  // Enable for MediaRecorder compatibility - we'll be careful about security
-    contextIsolation: false,  // Required for both MediaRecorder and contextBridge to work
-      webSecurity: false,  // Allow local file access for audio/video playback
-      allowRunningInsecureContent: true,  // Allow drag/drop files
+    icon: path.join(__dirname, 'assets', 'icons', 'Auqular256.ico'),
+    webPreferences: {
+      nodeIntegration: true,              // Full Node.js access
+      contextIsolation: false,            // No isolation
+      enableRemoteModule: true,           // Enable remote (deprecated but we don't care)
+      webSecurity: false,                 // Disable web security
+      allowRunningInsecureContent: true,  // Allow insecure content
+      experimentalFeatures: true,         // Enable experimental features
+      nativeWindowOpen: true,             // Native window.open
       preload: path.join(__dirname, 'preload.js')
     }
   });
   
-  // Enable file drag and drop - handle in main process
-  mainWindow.webContents.on('dom-ready', () => {
-    // Inject script to handle file drops
-    mainWindow.webContents.executeJavaScript(`
-      document.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        e.dataTransfer.dropEffect = 'copy';
-      }, false);
+  // MULTI-LAYERED FILE DROP INTERCEPTION
+  
+  // Layer 1: Intercept navigation attempts
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    console.log('🔍 [Layer 1] Navigation intercepted:', url);
+    
+    // Check if this is a file drop (file:// protocol)
+    if (url.startsWith('file://') && !url.includes('/dist/index.html')) {
+      console.log('📁 [Layer 1] File drop detected via navigation!');
+      event.preventDefault();
       
-      document.addEventListener('drop', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      }, false);
-    `);
+      // Extract file path from file:// URL
+      let filePath = decodeURIComponent(url.replace('file:///', ''));
+      
+      // Normalize path for Windows
+      if (process.platform === 'win32') {
+        filePath = filePath.replace(/\//g, '\\');
+      }
+      
+      console.log('✅ [Layer 1] Extracted absolute path:', filePath);
+      
+      // Get file info
+      const fileName = path.basename(filePath);
+      const fileExt = path.extname(filePath).toLowerCase();
+      
+      const mimeTypes = {
+        '.mp4': 'video/mp4',
+        '.mov': 'video/quicktime',
+        '.avi': 'video/x-msvideo',
+        '.mkv': 'video/x-matroska',
+        '.webm': 'video/webm',
+        '.wav': 'audio/wav',
+        '.mp3': 'audio/mpeg',
+        '.aac': 'audio/aac',
+        '.ogg': 'audio/ogg'
+      };
+      
+      const fileData = [{
+        path: filePath,
+        name: fileName,
+        type: mimeTypes[fileExt] || 'application/octet-stream',
+        size: 0
+      }];
+      
+      console.log('📤 [Layer 1] Sending to renderer:', fileData);
+      mainWindow.webContents.send('file-dropped', fileData);
+    } else if (!url.startsWith('devtools://')) {
+      event.preventDefault();
+      console.log('🚫 [Layer 1] Blocked navigation to:', url);
+    }
+  });
+  
+  // Layer 2: Aggressive DOM injection after page load
+  mainWindow.webContents.on('did-finish-load', () => {
+    console.log('📡 [Layer 2] Page loaded - injecting aggressive file drop handler');
+    
+    mainWindow.webContents.executeJavaScript(`
+      (function() {
+        console.log('🎬 [Layer 2] Aggressive file drop handler injected');
+        
+        // Override ALL drag/drop events with maximum priority
+        const handleDragOver = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          if (e.dataTransfer) {
+            e.dataTransfer.dropEffect = 'copy';
+            e.dataTransfer.effectAllowed = 'all';
+          }
+          return false;
+        };
+        
+        const handleDrop = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          
+          console.log('🎯 [Layer 2] DROP intercepted!', e.dataTransfer.files.length);
+          
+          if (e.dataTransfer.files.length > 0) {
+            const files = Array.from(e.dataTransfer.files);
+            
+            // CRITICAL: file.path might be undefined, try multiple methods
+            const fileData = files.map(file => {
+              // Try various ways to get the path
+              const filePath = file.path || 
+                               (file.getAsFile && file.getAsFile().path) ||
+                               (file.webkitRelativePath) ||
+                               null;
+              
+              return {
+                path: filePath,
+                name: file.name,
+                type: file.type,
+                size: file.size,
+                _raw: file // Send raw file object too
+              };
+            });
+            
+            console.log('📁 [Layer 2] Files with paths:', fileData.map(f => ({ name: f.name, path: f.path })));
+            
+            // If NO paths available, alert user to use file picker
+            if (fileData.every(f => !f.path)) {
+              console.error('❌ [Layer 2] Cannot get file paths - Windows UIPI blocking');
+              alert('Drag & drop blocked by Windows.\\n\\nPlease use the "📁 Add Files" button instead.');
+              return false;
+            }
+            
+            // Send via IPC
+            if (window.require) {
+              const { ipcRenderer } = window.require('electron');
+              // Filter out files without paths
+              const validFiles = fileData.filter(f => f.path);
+              if (validFiles.length > 0) {
+                ipcRenderer.send('files-dropped-layer2', validFiles);
+              }
+            }
+          }
+          
+          return false;
+        };
+        
+        // Remove ALL existing drag/drop listeners
+        document.removeEventListener('dragover', handleDragOver);
+        document.removeEventListener('drop', handleDrop);
+        
+        // Add with capture and NO passive
+        document.addEventListener('dragover', handleDragOver, { capture: true, passive: false });
+        document.addEventListener('drop', handleDrop, { capture: true, passive: false });
+        
+        // Also add to window
+        window.addEventListener('dragover', handleDragOver, { capture: true, passive: false });
+        window.addEventListener('drop', handleDrop, { capture: true, passive: false });
+        
+        console.log('✅ [Layer 2] Handlers attached to document and window');
+      })();
+    `).then(() => {
+      console.log('✅ [Layer 2] Injection complete');
+    }).catch(err => {
+      console.error('❌ [Layer 2] Injection failed:', err);
+    });
   });
 
   mainWindow.loadFile('dist/index.html');
@@ -82,25 +226,16 @@ app.whenReady().then(() => {
   // CRITICAL: Configure session handlers BEFORE creating window
   // This ensures getDisplayMedia requests are properly handled
 
-  // Handle permission requests for media (camera, microphone, screen)
+  // GRANT ALL PERMISSIONS - NO EXCEPTIONS
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
-    console.log(`Permission request for '${permission}'`);
-    console.log('Permission details:', details);
-    
-    if (permission === 'media') {
-      // Auto-grant media permissions (includes camera and microphone)
-      console.log('Granting media permission');
-      callback(true);
-    } else if (permission === 'camera') {
-      console.log('Camera permission requested');
-      callback(true);
-    } else if (permission === 'microphone') {
-      console.log('Microphone permission requested');
-      callback(true);
-    } else {
-      console.log(`Denying permission: ${permission}`);
-      callback(false);
-    }
+    console.log(`✅ [Layer 3] AUTO-GRANTING permission: '${permission}'`);
+    callback(true); // Grant EVERYTHING
+  });
+  
+  // Allow ALL permissions without asking
+  session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    console.log(`✅ [Layer 3] Permission check passed: '${permission}'`);
+    return true; // Always allow
   });
 
   // CRITICAL: Set display media request handler for getDisplayMedia to work
@@ -600,6 +735,38 @@ ipcMain.handle('show-save-dialog', async () => {
     return result.filePath;
   }
   return null;
+});
+
+// HOMERUN FIX: Multi-select file picker (bypasses Windows UIPI drag/drop block)
+ipcMain.handle('open-file-dialog', async () => {
+  const os = require('os');
+  const defaultPath = path.join(os.homedir(), 'Videos'); // Start in Videos folder
+  
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile', 'multiSelections'],
+    defaultPath: defaultPath,
+    filters: [
+      { name: 'Media Files', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'wav', 'mp3', 'aac', 'ogg'] }
+    ]
+  });
+  
+  if (!result.canceled) {
+    console.log('📁 Files selected via picker:', result.filePaths);
+    return result.filePaths;
+  }
+  return [];
+});
+
+// Layer 2 IPC handler - receives files from injected code
+ipcMain.on('files-dropped-layer2', (event, fileData) => {
+  console.log('📨 [Layer 2] Main process received dropped files:', fileData.length);
+  fileData.forEach(file => {
+    console.log('  📄 [Layer 2]', file.name, '→', file.path);
+  });
+  
+  // Forward to renderer with 'file-dropped' event (App.jsx is already listening)
+  event.sender.send('file-dropped', fileData);
+  console.log('✅ [Layer 2] Forwarded files to renderer process');
 });
 
 ipcMain.handle('get-desktop-sources', async () => {

@@ -195,10 +195,10 @@ function MultiLaneTimeline({ clips, setClips, currentClip, setCurrentClip, playh
         </button>
         {currentClip && (
           <>
-            <button onClick={onSplitClip} className="btn-small" title="Split at playhead (S)">
+            <button onClick={onSplitClip} className="add-lane-btn" title="Split at playhead (S)">
               ✂️ Split
             </button>
-            <button onClick={onDeleteClip} className="btn-small" title="Delete clip (Delete)">
+            <button onClick={onDeleteClip} className="add-lane-btn" title="Delete clip (Delete)">
               🗑️ Delete
             </button>
           </>
