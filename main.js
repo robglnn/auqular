@@ -73,7 +73,16 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  createWindow();
+  // === FORCE CLEAR CACHED SOURCES ON APP START ===
+  // Invalidate desktopCapturer cache to prevent stale source IDs
+  const originalGetSources = desktopCapturer.getSources;
+  desktopCapturer.getSources = async (options) => {
+    // Force fresh sources - no caching
+    return originalGetSources({ ...options, fetchWindowIcons: false });
+  };
+  
+  // CRITICAL: Configure session handlers BEFORE creating window
+  // This ensures getDisplayMedia requests are properly handled
 
   // Handle permission requests for media (camera, microphone, screen)
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
@@ -96,7 +105,77 @@ app.whenReady().then(() => {
     }
   });
 
-  // Let the system picker handle display media requests - no custom handler needed
+  // CRITICAL: Set display media request handler for getDisplayMedia to work
+  // This is REQUIRED for getDisplayMedia API in Electron
+  session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    console.log('🚨 DISPLAY MEDIA REQUEST RECEIVED');
+    console.log('Video requested:', request.videoRequested);
+    console.log('Audio requested:', request.audioRequested);
+    console.log('Security origin:', request.securityOrigin);
+    console.log('User gesture:', request.userGesture);
+    console.log('Frame:', request.frame ? 'present' : 'null');
+    
+    // Use desktopCapturer to get screen sources
+    desktopCapturer.getSources({ 
+      types: ['screen', 'window'],
+      thumbnailSize: { width: 150, height: 150 },
+      fetchWindowIcons: false
+    }).then((sources) => {
+      console.log(`📺 Found ${sources.length} desktop sources`);
+      sources.forEach((source, index) => {
+        console.log(`  Source ${index}: id=${source.id}, name=${source.name}, type=${source.id.startsWith('screen:') ? 'screen' : 'window'}`);
+      });
+      
+      // Find first screen source (not window)
+      const screenSource = sources.find(source => source.id.startsWith('screen:'));
+      
+      if (screenSource && request.videoRequested) {
+        console.log('✅ Granting screen capture access:', screenSource.name);
+        console.log('   Screen source ID:', screenSource.id);
+        
+        // Grant video from screen source - use the DesktopCapturerSource object directly
+        const result = {
+          video: screenSource  // Pass the entire DesktopCapturerSource object
+        };
+        
+        // Grant audio if requested (system audio loopback on Windows)
+        if (request.audioRequested && process.platform === 'win32') {
+          result.audio = 'loopback'; // System audio capture (Windows only)
+          console.log('   Granting system audio capture (loopback)');
+        }
+        
+        console.log('📤 Calling callback with result:', JSON.stringify({
+          video: { id: result.video.id, name: result.video.name },
+          audio: result.audio
+        }));
+        callback(result);
+      } else {
+        console.warn('⚠️ No screen source found or video not requested');
+        console.warn(`   Screen source: ${screenSource ? 'found' : 'NOT found'}`);
+        console.warn(`   Video requested: ${request.videoRequested}`);
+        
+        // Grant first available source or deny
+        if (sources.length > 0 && request.videoRequested) {
+          console.log('✅ Granting first available source as fallback:', sources[0].name);
+          callback({ video: sources[0] });
+        } else {
+          console.error('❌ Cannot grant display media - no sources available');
+          callback({}); // Deny access
+        }
+      }
+    }).catch((error) => {
+      console.error('❌ Error getting desktop sources:', error);
+      console.error('   Error stack:', error.stack);
+      callback({}); // Deny access on error
+    });
+  }, { 
+    useSystemPicker: false // Disable system picker to ensure our handler is called
+  });
+  
+  console.log('✅ Display media request handler configured');
+  
+  // NOW create window after handlers are configured
+  createWindow();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

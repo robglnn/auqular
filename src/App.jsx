@@ -583,7 +583,13 @@ function App() {
         onImportAudio={handleImportAudio}
         onExport={handleExport}
         canExport={clips.length > 0}
-        onRecord={() => setShowRecordingPanel(!showRecordingPanel)}
+        onRecord={() => {
+          // CRITICAL: Stop playback before showing recording panel (releases camera/mic on Windows)
+          if (isPlaying) {
+            setIsPlaying(false);
+          }
+          setShowRecordingPanel(!showRecordingPanel);
+        }}
       />
       <div className="main-content">
         {showRecordingPanel && (

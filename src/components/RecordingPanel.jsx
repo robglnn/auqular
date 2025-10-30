@@ -32,10 +32,9 @@ function RecordingPanel({ onRecordingComplete }) {
     try {
       console.log('Starting screen recording...');
       
-      // Request screen capture
+      // Request screen capture (shows system picker for screen/window selection)
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: {
-          mediaSource: 'screen',
           width: { ideal: 1920 },
           height: { ideal: 1080 },
           frameRate: { ideal: 30 }
@@ -73,6 +72,35 @@ function RecordingPanel({ onRecordingComplete }) {
       });
 
       console.log('All tracks:', stream.getTracks().map(t => ({ kind: t.kind, enabled: t.enabled, readyState: t.readyState, muted: t.muted })));
+      
+      // CRITICAL FIX: Create hidden video element to keep stream alive (same as webcam recording)
+      const video = document.createElement('video');
+      video.srcObject = stream;
+      video.autoplay = true;
+      video.playsInline = true;
+      video.muted = true;
+      video.style.display = 'none';
+      document.body.appendChild(video);
+      
+      // Wait for video to be ready
+      await new Promise((resolve) => {
+        video.onloadedmetadata = () => {
+          video.play();
+          console.log('Hidden video element started playing');
+          resolve();
+        };
+      });
+      
+      // CRITICAL: Capture stream from video element instead of direct stream
+      const captureStream = video.captureStream(30); // 30 FPS
+      console.log('Capture stream from video:', captureStream);
+      console.log('Capture stream active:', captureStream.active);
+      
+      // Store video reference for cleanup
+      videoRef.current = video;
+      
+      // Use the capture stream for MediaRecorder, keep original stream for cleanup
+      const recordingStream = captureStream;
       
       // Create MediaRecorder - use simplest MIME type for compatibility
       const mimeType = 'video/webm';

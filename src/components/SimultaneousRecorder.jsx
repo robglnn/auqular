@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 
 function SimultaneousRecorder({ onRecordingComplete }) {
@@ -32,57 +33,168 @@ function SimultaneousRecorder({ onRecordingComplete }) {
   const recordingActiveRef = useRef(false);
   const frameRef = useRef(null);
 
+  // EMERGENCY TRACK CLEANUP - Run before EVERY recording attempt
+  const killAllTracks = () => {
+    console.log("⚡ EMERGENCY TRACK SWEEP");
+    
+    // Log active devices
+    navigator.mediaDevices.enumerateDevices().then(devices => {
+      console.log("Active devices:", devices.map(d => `${d.kind}: ${d.label}`));
+    }).catch(console.error);
+
+    // Find ANY video/audio with srcObject and kill tracks
+    document.querySelectorAll('video, audio').forEach((el, i) => {
+      if (el.srcObject) {
+        console.warn(`Found rogue stream in element #${i}`, el);
+        el.srcObject.getTracks().forEach(t => {
+          console.log(`Force-stop: ${t.kind} (${t.label || 'unlabeled'})`);
+          t.stop();
+        });
+        el.srcObject = null;
+      }
+      el.src = '';
+    });
+  };
+
+  // === NUCLEAR RESET: FORCE KILL ALL MEDIA DEVICES + RESTART STACK ===
+  const nuclearReset = async () => {
+    console.log("☢️ NUCLEAR MEDIA STACK RESET INITIATED");
+
+    // 1. Kill EVERYTHING in DOM
+    document.querySelectorAll('video, audio').forEach(el => {
+      if (el.srcObject) {
+        el.srcObject.getTracks().forEach(t => t.stop());
+        el.srcObject = null;
+      }
+      el.src = '';
+    });
+
+    // 2. Force Chrome to release ALL MediaStreamTracks globally
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      console.log("Devices before reset:", devices.length);
+    } catch (e) {}
+
+    // 3. **CRITICAL: RELOAD MEDIA DEVICES API** (forces Chrome to re-enumerate)
+    await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      .then(stream => stream.getTracks().forEach(t => t.stop()))
+      .catch(() => {});
+
+    // 4. **FORCE desktopCapturer CACHE CLEAR**
+    try {
+      const { ipcRenderer } = window.require('electron');
+      await ipcRenderer.invoke('get-desktop-sources');
+      console.log("desktopCapturer cache probed");
+    } catch (e) {
+      console.log("desktopCapturer cache probed (error ignored)");
+    }
+
+    // 5. HARD DELAY — Windows needs 1.2s to release DWM lock
+    await new Promise(r => setTimeout(r, 1200));
+  };
+
+  // Get screen stream with fresh desktopCapturer
+  const getScreenStream = async () => {
+    const { ipcRenderer } = window.require('electron');
+    
+    // FORCE FRESH SOURCES — NO CACHING
+    const sources = await ipcRenderer.invoke('get-desktop-sources');
+
+    if (!sources || sources.length === 0) throw new Error("No screen sources");
+
+    const screenSource = sources.find(source => source.id.startsWith('screen:')) || sources[0];
+    console.log("Using screen source:", screenSource.id);
+
+    // **CRITICAL: Use EXACT source ID + 'desktop' constraint**
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        mandatory: {
+          chromeMediaSource: 'desktop',
+          chromeMediaSourceId: screenSource.id,
+          minWidth: 1280,
+          maxWidth: 1920,
+          minHeight: 720,
+          maxHeight: 1080
+        }
+      }
+    });
+
+    return stream;
+  };
+
   const startRecording = async () => {
     try {
       console.log('Starting simultaneous screen + webcam recording...');
       
+      // === NUCLEAR RESET FIRST ===
+      await nuclearReset();
+      
       const { ipcRenderer } = window.require('electron');
       
-      // Start native system audio recording if enabled (microphone uses Web Audio API from webcam stream)
+      // === REVERSE ACQUISITION ORDER: Webcam first, then Screen ===
+      let webcamStream = null;
+      let screenStream = null;
+
+      try {
+        // 1. GET WEBCAM FIRST (less likely to fail)
+        webcamStream = await navigator.mediaDevices.getUserMedia({
+          video: { 
+            width: { ideal: 640 }, 
+            height: { ideal: 480 },
+            frameRate: { ideal: 30 }
+          },
+          audio: audioSources.microphone ? {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          } : false
+        });
+        console.log("✅ Webcam acquired");
+
+        // 2. THEN GET SCREEN
+        screenStream = await getScreenStream();
+        console.log("✅ Screen acquired");
+
+      } catch (err) {
+        // IF SCREEN FAILS — RELEASE WEBCAM AND RETRY IN REVERSE ORDER
+        if (webcamStream) webcamStream.getTracks().forEach(t => t.stop());
+        if (screenStream) screenStream.getTracks().forEach(t => t.stop());
+
+        console.log("Fallback: Trying screen first...");
+        await new Promise(r => setTimeout(r, 1000));
+
+        screenStream = await getScreenStream();
+        webcamStream = await navigator.mediaDevices.getUserMedia({
+          video: { 
+            width: { ideal: 640 }, 
+            height: { ideal: 480 },
+            frameRate: { ideal: 30 }
+          },
+          audio: audioSources.microphone ? {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          } : false
+        });
+      }
+      
+      console.log('Both streams obtained successfully');
+      
+      // {{ edit_3 }}: Start system audio AFTER video streams (to avoid locking conflicts)
+      // Wrapped in try-catch to fall back if it fails
       if (audioSources.systemAudio) {
-        const systemAudioResult = await ipcRenderer.invoke('start-system-audio-recording');
-        if (!systemAudioResult.success) {
-          console.warn('Failed to start system audio recording:', systemAudioResult.error);
-          // Don't show alert - just disable system audio silently
+        try {
+          const systemAudioResult = await ipcRenderer.invoke('start-system-audio-recording');
+          if (!systemAudioResult.success) {
+            console.warn('Failed to start system audio recording:', systemAudioResult.error);
+            // Fall back without blocking video
+            setAudioSources(prev => ({ ...prev, systemAudio: false }));
+          }
+        } catch (e) {
+          console.warn('System audio start failed (non-blocking):', e);
           setAudioSources(prev => ({ ...prev, systemAudio: false }));
         }
       }
-      
-      // NOTE: Microphone audio is captured via Web Audio API from webcam stream below
-      // No need to start native microphone recording - we use getUserMedia audio track
-      
-      // Get desktop sources for screen recording
-      const sources = await ipcRenderer.invoke('get-desktop-sources');
-      const screenSource = sources.find(source => source.id.startsWith('screen:'));
-      
-      if (!screenSource) {
-        throw new Error('No screen found. Please ensure desktop is available.');
-      }
-      
-      // Start screen capture
-      const screenStream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          mandatory: {
-            chromeMediaSource: 'desktop',
-            chromeMediaSourceId: screenSource.id,
-            minWidth: 1920,
-            minHeight: 1080
-          }
-        }
-      });
-      
-      // Start webcam capture WITH audio for microphone
-      const webcamStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          frameRate: { ideal: 30 }
-        },
-        audio: audioSources.microphone // Capture microphone via getUserMedia
-      });
-      
-      console.log('Both streams obtained successfully');
       
       // Set up screen video element
       const screenVideo = document.createElement('video');
@@ -292,9 +404,11 @@ function SimultaneousRecorder({ onRecordingComplete }) {
   };
 
   const stopRecording = async () => {
+    console.log("🛑 FORCE STOP: Beginning emergency track cleanup");
+
     if (!isRecording || combinedFramesRef.current.length === 0) {
-      alert('No frames captured');
-      return;
+      // Still cleanup even if no frames
+      console.warn('No frames captured, but cleaning up tracks anyway');
     }
 
     setIsRecording(false);
@@ -303,63 +417,92 @@ function SimultaneousRecorder({ onRecordingComplete }) {
     // Stop frame capture
     if (frameRef.current) {
       clearTimeout(frameRef.current);
+      frameRef.current = null;
     }
     
     if (timerRef.current) {
       clearInterval(timerRef.current);
+      timerRef.current = null;
     }
 
     console.log(`Captured ${combinedFramesRef.current.length} combined frames`);
 
-    // Cleanup video elements
+    // 1. Stop all MediaRecorder instances first
+    if (microphoneStreamRef.current && microphoneStreamRef.current.recorder) {
+      const recorder = microphoneStreamRef.current.recorder;
+      if (recorder.state === 'recording' || recorder.state === 'paused') {
+        console.log(`Stopping MediaRecorder: ${recorder.state}`);
+        try {
+          recorder.stop();
+        } catch (e) {
+          console.warn('Error stopping MediaRecorder:', e);
+        }
+      }
+    }
+
+    // 2. Stop ALL tracks from ALL known streams
+    [screenStreamRef.current, webcamStreamRef.current].forEach((stream, index) => {
+      if (stream) {
+        stream.getTracks().forEach(track => {
+          console.log(`Stopping track: ${track.kind} (${track.label || 'unlabeled'})`);
+          track.stop();
+        });
+        if (index === 0) screenStreamRef.current = null;
+        if (index === 1) webcamStreamRef.current = null;
+      }
+    });
+
+    // 3. Cleanup video elements and stop their tracks
     if (screenVideoRef.current) {
-      screenVideoRef.current.srcObject.getTracks().forEach(track => track.stop());
+      if (screenVideoRef.current.srcObject) {
+        screenVideoRef.current.srcObject.getTracks().forEach(track => {
+          console.log(`Stopping screen video element track: ${track.kind}`);
+          track.stop();
+        });
+        screenVideoRef.current.srcObject = null;
+      }
       screenVideoRef.current.remove();
       screenVideoRef.current = null;
     }
 
     if (webcamVideoRef.current) {
-      webcamVideoRef.current.srcObject.getTracks().forEach(track => track.stop());
+      if (webcamVideoRef.current.srcObject) {
+        webcamVideoRef.current.srcObject.getTracks().forEach(track => {
+          console.log(`Stopping webcam video element track: ${track.kind}`);
+          track.stop();
+        });
+        webcamVideoRef.current.srcObject = null;
+      }
       webcamVideoRef.current.remove();
       webcamVideoRef.current = null;
     }
 
-    if (screenStreamRef.current) {
-      screenStreamRef.current.getTracks().forEach(track => track.stop());
-      screenStreamRef.current = null;
-    }
+    // 4. Clear ALL video/audio elements in DOM (emergency cleanup)
+    document.querySelectorAll('video, audio').forEach(el => {
+      if (el.srcObject) {
+        el.srcObject.getTracks().forEach(t => {
+          console.log(`Stopping DOM element track: ${t.kind}`);
+          t.stop();
+        });
+        el.srcObject = null;
+      }
+      el.src = '';
+      el.load();
+    });
 
-    if (webcamStreamRef.current) {
-      webcamStreamRef.current.getTracks().forEach(track => track.stop());
-      webcamStreamRef.current = null;
-    }
+    // 5. Stop microphone MediaRecorder capture (already handled above, but ensure stream is stopped)
 
-    // Stop MediaRecorder microphone capture
+    // 5. Stop MediaRecorder microphone capture (recorder already stopped above, now stop stream)
     const { ipcRenderer } = window.require('electron');
     
-    if (microphoneStreamRef.current && microphoneStreamRef.current.recorder) {
+    if (microphoneStreamRef.current) {
       try {
-        const recorder = microphoneStreamRef.current.recorder;
-        
-        // Stop MediaRecorder
-        if (recorder.state === 'recording' || recorder.state === 'paused') {
-          recorder.stop();
-          console.log('Stopping MediaRecorder microphone capture...');
-          
-          // Wait for onstop event (MediaRecorder is async)
-          await new Promise((resolve) => {
-            if (recorder.state === 'inactive') {
-              resolve();
-            } else {
-              recorder.onstop = resolve;
-              setTimeout(resolve, 1000); // Timeout after 1 second
-            }
-          });
-        }
-        
         // Stop audio track
         if (microphoneStreamRef.current.stream) {
-          microphoneStreamRef.current.stream.getTracks().forEach(track => track.stop());
+          microphoneStreamRef.current.stream.getTracks().forEach(track => {
+            console.log(`Stopping microphone stream track: ${track.kind}`);
+            track.stop();
+          });
         }
         
         console.log(`🎤 MediaRecorder stopped. Total chunks: ${microphoneAudioChunksRef.current.length}`);
@@ -372,11 +515,22 @@ function SimultaneousRecorder({ onRecordingComplete }) {
     const totalSize = microphoneAudioChunksRef.current.reduce((sum, chunk) => sum + (chunk.size || 0), 0);
     console.log(`🎤 Microphone audio collected: ${microphoneAudioChunksRef.current.length} chunks, ${totalSize} bytes`);
     
-    // Stop native audio recording (fallback)
+    // 6. Stop native audio recording (fallback)
     try {
       await ipcRenderer.invoke('stop-audio-recording');
     } catch (error) {
       console.error('Error stopping native audio recording:', error);
+    }
+
+    // 7. Clear all refs to ensure no lingering references
+    combinedCanvasRef.current = null;
+    
+    // 8. Force cleanup complete log
+    console.log("🧹 Cleanup complete. Ready for new recording.");
+    
+    // Don't continue if no frames captured
+    if (combinedFramesRef.current.length === 0) {
+      return;
     }
 
     // Save frames and convert to video with FFmpeg
@@ -565,6 +719,62 @@ function SimultaneousRecorder({ onRecordingComplete }) {
       </div>
     </div>
   );
+}
+
+// === TEST FUNCTION FOR DEVTOOLS ===
+if (typeof window !== 'undefined') {
+  window.TEST_FIX = async () => {
+    console.clear();
+    console.log("🧪 TEST_FIX: Starting nuclear reset and screen stream test...");
+    
+    const { ipcRenderer } = window.require('electron');
+    
+    // Nuclear reset
+    console.log("☢️ Running nuclear reset...");
+    document.querySelectorAll('video, audio').forEach(el => {
+      if (el.srcObject) {
+        el.srcObject.getTracks().forEach(t => t.stop());
+        el.srcObject = null;
+      }
+      el.src = '';
+    });
+    
+    try {
+      await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        .then(stream => stream.getTracks().forEach(t => t.stop()))
+        .catch(() => {});
+    } catch (e) {}
+    
+    await ipcRenderer.invoke('get-desktop-sources').catch(() => {});
+    
+    await new Promise(r => setTimeout(r, 1200));
+    
+    // Get screen stream
+    try {
+      const sources = await ipcRenderer.invoke('get-desktop-sources');
+      const screenSource = sources.find(source => source.id.startsWith('screen:')) || sources[0];
+      
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          mandatory: {
+            chromeMediaSource: 'desktop',
+            chromeMediaSourceId: screenSource.id,
+            minWidth: 1280,
+            maxWidth: 1920,
+            minHeight: 720,
+            maxHeight: 1080
+          }
+        }
+      });
+      
+      console.log("✅ SUCCESS: Screen stream acquired", stream.getVideoTracks()[0].label);
+      stream.getTracks().forEach(t => t.stop());
+      console.log("✅ Stream stopped successfully");
+    } catch (e) {
+      console.error("❌ STILL FAILED", e);
+      console.error("Error details:", e.name, e.message);
+    }
+  };
 }
 
 export default SimultaneousRecorder;
